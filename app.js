@@ -4,9 +4,9 @@
 
 const CONFIG = {
     demoMode: false,
-    scriptUrl: localStorage.getItem('audiolend_script_url') || '',
-    sheetUrl: localStorage.getItem('audiolend_sheet_url') || 'https://docs.google.com/spreadsheets/d/1_YOUR_SHEET_ID/edit',
-    adminPassword: 'admin',
+    scriptUrl: localStorage.getItem('audiolend_script_url') || 'https://script.google.com/macros/s/AKfycbywwlkVaHLmOA3c67V3PhPjcIK96a2IYfkFZ1Mgw9HdGRYp3Kj4twWJvoZVBDK7_Fu8/exec',
+    sheetUrl: localStorage.getItem('audiolend_sheet_url') || 'https://docs.google.com/spreadsheets/d/1HTRMz15UmVqTHgGkU95OjK7wihZJgEm05G7QfgNqNeg/edit?pli=1&gid=1451542023#gid=1451542023',
+    adminPassword: 'adminfelipe',
 };
 
 // Base de Datos en Memoria para el MODO DEMO (Columnas reales de la UFRO)
