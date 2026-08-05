@@ -57,6 +57,7 @@ const dom = {
     selectedItems: document.getElementById('selected-items-container'),
     studentRut: document.getElementById('student-rut'),
     btnVerifyStudent: document.getElementById('btn-verify-student'),
+    studentValidationForm: document.getElementById('student-validation-form'),
     studentInfoBox: document.getElementById('student-info-box'),
     studentStatusBadge: document.getElementById('student-status-badge'),
     studentStatusText: document.getElementById('student-status-text'),
@@ -445,13 +446,19 @@ function initEventListeners() {
         }
     });
     
-    dom.btnVerifyStudent.addEventListener('click', () => {
-        verifyStudent();
-    });
-    
-    dom.studentRut.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') verifyStudent();
-    });
+    if (dom.studentValidationForm) {
+        dom.studentValidationForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            verifyStudent();
+        });
+    } else {
+        dom.btnVerifyStudent.addEventListener('click', () => {
+            verifyStudent();
+        });
+        dom.studentRut.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') verifyStudent();
+        });
+    }
     
     dom.btnConfirmLoan.addEventListener('click', () => {
         processLoanCheckout();
