@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solicitud AVP UFRO - Gestión de Equipos</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Estilos -->
+    <link rel="stylesheet" href="styles.css?v=23.2">
+    <!-- Lucide Icons para Iconos Premium -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js para Analíticas -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- html5-qrcode para escanear códigos con la cámara -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/lucas-html5-qrcode.min.js"></script>
+    
+    <!-- PWA Manifest & Apple Web App Meta Tags (Fase 23) -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AVP UFRO">
+    <link rel="apple-touch-icon" href="logo.jpg">
+</head>
+<body class="light-theme">
+    <!-- Contenedor Principal con Grid Layout -->
+    <div class="app-container">
+        
+        <!-- Barra de Navegación Lateral (Sidebar - Conserva tono oscuro para contraste) -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-container">
+                    <img src="logo.jpg" alt="Logo Periodismo UFRO" style="width: 44px; height: 44px; border-radius: var(--border-radius-md); object-fit: cover; border: 1.5px solid rgba(255, 255, 255, 0.3); background: #fff;">
+                    <div class="logo-text">
+                        <h1>AVP UFRO</h1>
+                        <span>Periodismo</span>
+                    </div>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <ul>
+                    <li>
+                        <button class="nav-btn active" data-target="section-loans">
+                            <i data-lucide="shopping-bag"></i>
+                            <span>Préstamos</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button class="nav-btn" data-target="section-protocols">
+                            <i data-lucide="file-text"></i>
+                            <span>Protocolos</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button class="nav-btn" data-target="section-admin" id="btn-nav-admin">
+                            <i data-lucide="layout-dashboard"></i>
+                            <span>Panel Admin</span>
+                        </button>
+                    </li>
+                </ul>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <!-- Indicador de conexión / Modo -->
+                <div class="status-indicator demo-active" id="connection-status">
+                    <span class="status-dot"></span>
+                    <span class="status-label">Modo Demo Activo</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Contenedor de Contenido Principal (Fondo Blanco) -->
+        <main class="main-content">
+            <!-- Encabezado de la página activa -->
+            <header class="content-header">
+                <div class="header-info">
+                    <h2 id="current-section-title">Registrar Préstamo</h2>
+                    <p id="current-section-subtitle">Selecciona los equipos y valida al alumno para iniciar el préstamo.</p>
+                </div>
+                
+                <div class="header-actions">
+                    <!-- Switch de Modo Demo / Producción en tiempo real (oculto por defecto) -->
+                    <div class="mode-switch-container hidden" id="mode-switch-container">
+                        <span class="mode-text">Modo Demo</span>
+                        <label class="switch">
+                            <input type="checkbox" id="mode-toggle">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    
+                    <button class="btn btn-secondary btn-icon-only hidden" id="btn-refresh" title="Sincronizar datos">
+                        <i data-lucide="refresh-cw"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- ================= SECCIÓN DE PRÉSTAMOS ================= -->
+            <section id="section-loans" class="tab-content active">
+                <div class="loans-layout">
+                    <!-- Lado Izquierdo: Selección de Categorías y Equipos -->
+                    <div class="inventory-selection-card glass-panel">
+                        <div class="card-header-tabs">
+                            <ul class="category-tabs" id="category-tabs-list">
+                                <!-- Se genera dinámicamente -->
+                            </ul>
+                        </div>
+                        
+                        <div class="equipment-grid" id="equipment-grid-container">
+                            <!-- Se genera dinámicamente -->
+                        </div>
+                    </div>
+
+                    <!-- Lado Derecho: Carrito de Préstamo y Datos del Alumno -->
+                    <div class="loan-summary-panel">
+                        <!-- Carrito de Equipos Seleccionados -->
+                        <div class="glass-panel summary-card">
+                            <h3 class="panel-title"><i data-lucide="shopping-cart"></i> Equipos Seleccionados</h3>
+                            <div class="selected-items-list" id="selected-items-container">
+                                <div class="empty-state">
+                                    <i data-lucide="plus-circle"></i>
+                                    <p>No has seleccionado ningún equipo.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Validación de Alumno y Confirmación -->
+                        <div class="glass-panel student-validation-card">
+                            <h3 class="panel-title"><i data-lucide="user-check"></i> Datos del Alumno</h3>
+                            
+                            <div class="rut-input-group">
+                                <label for="student-rut">RUT del Alumno</label>
+                                <div class="input-with-button">
+                                    <input type="text" id="student-rut" placeholder="12.345.678-9" autocomplete="off">
+                                    <button class="btn btn-primary" id="btn-verify-student">Validar</button>
+                                </div>
+                                <span class="input-helper">Presiona Validar para consultar estado en la carrera</span>
+                            </div>
+
+                            <!-- Caja informativa del alumno validado -->
+                            <div class="student-info-box hidden" id="student-info-box">
+                                <div class="student-info-header">
+                                    <div class="student-details">
+                                        <p class="student-name" id="display-student-name">Juan Pérez G.</p>
+                                        <p class="student-meta"><span id="display-student-email">juan.perez@u.cl</span> | <span id="display-student-career">Cine</span></p>
+                                    </div>
+                                    <div class="student-status-badge success" id="student-status-badge">
+                                        <i data-lucide="check-circle-2"></i> <span id="student-status-text">Alumno Regular</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="debt-warning hidden" id="student-debt-warning">
+                                    <i data-lucide="alert-triangle"></i>
+                                    <div class="debt-details">
+                                        <strong>Alumno con Deudas</strong>
+                                        <p id="display-student-debt">Tiene pendientes del semestre anterior.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Campos de planificación de fecha y asignatura (visibles tras validación) -->
+                            <div class="loan-details-group hidden" id="loan-details-group">
+                                <h4 class="sub-panel-title" style="margin-bottom: 16px; font-size: 0.9rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="calendar" style="color: var(--primary); width: 18px; height: 18px;"></i> Planificación del Préstamo
+                                </h4>
+                                
+                                <div class="input-group">
+                                    <label for="loan-date-out">Fecha de Retiro</label>
+                                    <input type="date" id="loan-date-out" required>
+                                </div>
+                                
+                                <div class="input-group">
+                                    <label for="loan-date-in">Fecha de Entrega</label>
+                                    <input type="date" id="loan-date-in" required>
+                                </div>
+                                
+                                <div class="input-group">
+                                    <label for="loan-subject">Asignatura / Cátedra</label>
+                                    <select id="loan-subject" class="select-input" required>
+                                        <option value="" disabled selected>Selecciona una asignatura...</option>
+                                        <!-- Se carga dinámicamente -->
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Ingreso de Números de Inventario -->
+                            <div class="inventory-codes-group hidden" id="inventory-codes-group">
+                                <h4 class="sub-panel-title">Asignación de Códigos de Inventario</h4>
+                                <div id="inventory-inputs-list">
+                                    <!-- Campos generados dinámicamente para cada item en el carrito -->
+                                </div>
+                            </div>
+
+                            <!-- Botón de Confirmación -->
+                            <div class="action-buttons-group">
+                                <button class="btn btn-success btn-full" id="btn-confirm-loan" disabled>
+                                    <i data-lucide="check"></i> Enviar Solicitud de Préstamo
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= SECCIÓN DE PROTOCOLOS ================= -->
+            <section id="section-protocols" class="tab-content">
+                <div class="protocols-layout glass-panel">
+                    <div class="protocols-header">
+                        <h3><i data-lucide="file-text"></i> Protocolos de Uso y Préstamo AVP UFRO</h3>
+                        <p>Lee detenidamente las condiciones de préstamo antes de solicitar equipos.</p>
+                    </div>
+                    
+                    <div class="protocols-grid">
+                        <div class="protocol-card">
+                            <div class="protocol-icon"><i data-lucide="clock"></i></div>
+                            <h4>Horarios y Plazos</h4>
+                            <ul>
+                                <li><strong>Oficina Audiovisual:</strong> Lunes a Viernes de 09:00 a 18:00 hrs.</li>
+                                <li><strong>Plazo Máximo:</strong> El plazo máximo de préstamo es de 2 días hábiles.</li>
+                                <li><strong>Fines de Semana:</strong> Los retiros del día viernes se deben devolver el lunes antes de las 10:00 hrs.</li>
+                            </ul>
+                        </div>
+                        <div class="protocol-card">
+                            <div class="protocol-icon"><i data-lucide="user-check"></i></div>
+                            <h4>Responsabilidad y Acceso</h4>
+                            <ul>
+                                <li><strong>Exclusividad:</strong> Préstamo de equipamiento SOLO para alumnos de la carrera de Periodismo de la Universidad de La Frontera.</li>
+                                <li><strong>Verificación:</strong> Se debe revisar el estado de los equipos en presencia del encargado antes de retirarse.</li>
+                                <li><strong>Responsabilidad:</strong> El alumno solicitante es el único responsable de los equipos y su conservación.</li>
+                            </ul>
+                        </div>
+                        <div class="protocol-card">
+                            <div class="protocol-icon"><i data-lucide="alert-triangle"></i></div>
+                            <h4>Sanciones por Atraso</h4>
+                            <ul>
+                                <li><strong>Sanción base:</strong> 1 día de atraso = 1 semana de suspensión en el derecho a préstamo.</li>
+                                <li><strong>Sanción acumulada:</strong> 2 días de atraso = 2 semanas sin poder solicitar, y así sucesivamente.</li>
+                                <li><strong>Bloqueo de Sistema:</strong> Alumnos atrasados quedarán congelados automáticamente durante la validación.</li>
+                            </ul>
+                        </div>
+                        <div class="protocol-card">
+                            <div class="protocol-icon"><i data-lucide="shield-alert"></i></div>
+                            <h4>Accidentes, Robos o Hurtos</h4>
+                            <ul>
+                                <li><strong>Aviso Inmediato:</strong> Se debe informar de inmediato a la unidad de Medios Audiovisuales ante cualquier siniestro.</li>
+                                <li><strong>Denuncia Policial:</strong> Realizar la denuncia en Carabineros antes de 24 horas y exigir una copia del parte policial.</li>
+                                <li><strong>Entrega de Parte:</strong> Hacer llegar la copia del parte de Carabineros a la Dirección de Carrera y a Medios Audiovisuales.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+
+
+            <!-- ================= SECCIÓN DE ADMINISTRACIÓN ================= -->
+            <section id="section-admin" class="tab-content">
+                <!-- Vista de Login -->
+                <div class="admin-login-wrapper" id="admin-login-container">
+                    <div class="admin-login-card glass-panel">
+                        <div class="login-header">
+                            <div class="login-logo" style="background:#fff; border: 1.5px solid rgba(79, 70, 229, 0.15); overflow:hidden;">
+                                <img src="logo.jpg" alt="Logo" style="width:100%; height:100%; object-fit:cover;">
+                            </div>
+                            <h3>Acceso Administrador AVP</h3>
+                            <p>Ingresa la clave para acceder al panel de control y analíticas.</p>
+                        </div>
+                        <form id="admin-login-form">
+                            <div class="input-group">
+                                <label for="admin-password">Contraseña</label>
+                                <input type="password" id="admin-password" placeholder="••••••••" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-full">
+                                <i data-lucide="log-in"></i> Iniciar Sesión
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Vista del Dashboard (Admin Autenticado) -->
+                <div class="admin-dashboard-wrapper hidden" id="admin-dashboard-container">
+                    
+                    <!-- Sub-Navegación del Admin (Pestañas Internas) -->
+                    <div class="admin-subnav glass-panel">
+                        <button class="admin-subnav-btn active" data-admin-target="admin-tab-loans">
+                            <i data-lucide="list"></i>
+                            <span>Gestión e Historial</span>
+                        </button>
+                        <button class="admin-subnav-btn" data-admin-target="admin-tab-stats">
+                            <i data-lucide="bar-chart-3"></i>
+                            <span>Estadísticas</span>
+                        </button>
+                        <button class="admin-subnav-btn" data-admin-target="admin-tab-config">
+                            <i data-lucide="settings-2"></i>
+                            <span>Configurar Equipos y Alumnos</span>
+                        </button>
+                        <button class="admin-subnav-btn" id="btn-logout-subnav" style="flex-grow:0; color:var(--danger); margin-left:auto; padding: 12px 20px;">
+                            <i data-lucide="log-out"></i>
+                            <span>Cerrar Sesión</span>
+                        </button>
+                    </div>
+
+                    <!-- SUB-TAB 1: GESTIÓN DE PRÉSTAMOS / HISTORIAL -->
+                    <div id="admin-tab-loans" class="admin-tab-content active">
+                        <div class="glass-panel admin-sub-panel">
+                            <div class="panel-header-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                                <h3 class="panel-title" style="margin:0;"><i data-lucide="history"></i> Control y Registro Histórico</h3>
+                                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                                    <div class="filter-group" style="margin:0;">
+                                        <button class="btn btn-filter active" id="btn-filter-loan-all" data-filter="all">Todos</button>
+                                        <button class="btn btn-filter" id="btn-filter-loan-solicitado" data-filter="solicitado">Solicitados</button>
+                                        <button class="btn btn-filter" id="btn-filter-loan-retirado" data-filter="retirado">Retirados</button>
+                                        <button class="btn btn-filter" id="btn-filter-loan-returned" data-filter="returned">Devueltos</button>
+                                    </div>
+                                    <button class="btn btn-primary" id="btn-export-excel" style="display:flex; align-items:center; gap:6px; padding: 8px 14px; font-size: 0.8rem; font-weight:700; border-radius:8px;">
+                                        <i data-lucide="download" style="width:15px; height:15px;"></i> Exportar Excel
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="results-table-container">
+                                <table class="data-table" id="admin-loans-table">
+                                    <thead>
+                                        <tr>
+                                            <th>ID Préstamo</th>
+                                            <th>RUT Alumno</th>
+                                            <th>Nombre Alumno</th>
+                                            <th>Equipo</th>
+                                            <th>Código Inventario</th>
+                                            <th>F. Solicitud</th>
+                                            <th>F. Retiro</th>
+                                            <th>F. Devolución</th>
+                                            <th>Días Atraso</th>
+                                            <th>Estado</th>
+                                            <th>Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="admin-loans-table-body">
+                                        <!-- Se carga dinámicamente -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB 2: ESTADÍSTICAS -->
+                    <div id="admin-tab-stats" class="admin-tab-content">
+                        <!-- Tarjetas de Métricas Rápidas -->
+                        <div class="metrics-grid">
+                            <div class="metric-card glass-panel">
+                                <div class="metric-icon blue"><i data-lucide="camera"></i></div>
+                                <div class="metric-info">
+                                    <h3>Total Equipos</h3>
+                                    <span class="metric-value" id="metric-total-equipos">0</span>
+                                </div>
+                            </div>
+                            <div class="metric-card glass-panel">
+                                <div class="metric-icon orange"><i data-lucide="arrow-up-right"></i></div>
+                                <div class="metric-info">
+                                    <h3>Préstamos Activos</h3>
+                                    <span class="metric-value" id="metric-prestamos-activos">0</span>
+                                </div>
+                            </div>
+                            <div class="metric-card glass-panel">
+                                <div class="metric-icon red"><i data-lucide="clock"></i></div>
+                                <div class="metric-info">
+                                    <h3>Préstamos Atrasados</h3>
+                                    <span class="metric-value" id="metric-prestamos-atrasados">0</span>
+                                </div>
+                            </div>
+                            <div class="metric-card glass-panel">
+                                <div class="metric-icon red"><i data-lucide="alert-octagon"></i></div>
+                                <div class="metric-info">
+                                    <h3>Alumnos Bloqueados</h3>
+                                    <span class="metric-value" id="metric-alumnos-bloqueados">0</span>
+                                </div>
+                            </div>
+                            <div class="metric-card glass-panel">
+                                <div class="metric-icon green"><i data-lucide="calendar"></i></div>
+                                <div class="metric-info">
+                                    <h3>Total Histórico</h3>
+                                    <span class="metric-value" id="metric-total-historico">0</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Gráficos de Analítica -->
+                        <div class="analytics-charts-grid">
+                            <div class="chart-card glass-panel">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+                                    <h4 class="chart-title" style="margin-bottom: 0;">Equipos Más Pedidos</h4>
+                                    <select id="chart-popular-category" style="padding: 4px 8px; border-radius: var(--border-radius-sm); font-size: 0.8rem; background: #ffffff; border: 1px solid #e2e8f0; color: var(--text-primary); cursor: pointer; outline: none; transition: var(--transition-fast); max-width: 180px;">
+                                        <option value="all">Todas las Categorías</option>
+                                    </select>
+                                </div>
+                                <div class="chart-container">
+                                    <canvas id="chart-popular-items"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card glass-panel">
+                                <h4 class="chart-title">Flujo de Préstamos por Día</h4>
+                                <div class="chart-container">
+                                    <canvas id="chart-flow-days"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card glass-panel">
+                                <h4 class="chart-title">Alumnos con Más Préstamos</h4>
+                                <div class="chart-container">
+                                    <canvas id="chart-top-students"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card glass-panel">
+                                <h4 class="chart-title">Préstamos por Asignatura</h4>
+                                <div class="chart-container">
+                                    <canvas id="chart-subject-distribution"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card glass-panel">
+                                <h4 class="chart-title">Cumplimiento y Retrasos</h4>
+                                <div class="chart-container">
+                                    <canvas id="chart-overdue-status"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Tabla de Detalles de Alumnos con Mayor Demanda -->
+                        <div class="glass-panel" style="margin-top: 24px; padding: 20px;">
+                            <h4 class="chart-title" style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="users" style="color:var(--primary); width:18px; height:18px;"></i> Detalle de Cumplimiento por Alumno (Mayor Demanda)
+                            </h4>
+                            <div class="results-table-container">
+                                <table class="data-table" id="admin-top-students-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Nombre Alumno</th>
+                                            <th>Total Préstamos</th>
+                                            <th>A Tiempo</th>
+                                            <th>Con Retraso</th>
+                                            <th>Retrasos Activos</th>
+                                            <th>Tasa de Retorno Tarde</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="admin-top-students-table-body">
+                                        <!-- Se carga dinámicamente -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB 3: CONFIGURACIÓN GENERAL (EQUIPOS, ALUMNOS Y API) -->
+                    <div id="admin-tab-config" class="admin-tab-content">
+                        <div class="config-layout-grid">
+                            
+                            <!-- Sección: Gestión de Equipos (Añadir / Eliminar) -->
+                            <div class="glass-panel config-card">
+                                <h3 class="panel-title"><i data-lucide="plus-circle"></i> Registrar Nuevo Equipo</h3>
+                                <form id="form-add-equipment" class="config-form">
+                                    <div class="input-group">
+                                        <label for="eq-name">Nombre del Equipo</label>
+                                        <input type="text" id="eq-name" placeholder="Ej. Sony Alpha 7 IV" required>
+                                    </div>
+                                    <div class="input-group-row">
+                                        <div class="input-group">
+                                            <label for="eq-category">Categoría</label>
+                                            <select id="eq-category" required class="select-input">
+                                                <option value="Cámaras">Cámaras</option>
+                                                <option value="Trípodes">Trípodes</option>
+                                                <option value="Audio">Audio</option>
+                                                <option value="Luces">Luces</option>
+                                            </select>
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eq-qty">Cantidad Total</label>
+                                            <input type="number" id="eq-qty" min="1" placeholder="Ej. 5" required>
+                                        </div>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="eq-codes">Códigos de Inventario (Separados por coma)</label>
+                                        <input type="text" id="eq-codes" placeholder="Ej. SONY-01, SONY-02, SONY-03" required>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="eq-image">URL de Imagen (Opcional)</label>
+                                        <input type="url" id="eq-image" placeholder="Ej. https://images.unsplash.com/photo-...">
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="eq-description">Descripción Breve (Opcional)</label>
+                                        <textarea id="eq-description" placeholder="Ej. Cámara mirrorless Full Frame..." class="select-input" style="height: 60px; resize: vertical;"></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary btn-full">
+                                        <i data-lucide="save"></i> Guardar Equipo
+                                    </button>
+                                </form>
+
+                                <div class="registered-list-container">
+                                    <h4 class="sub-panel-title">Equipos Registrados</h4>
+                                    <ul class="admin-data-list" id="admin-equipment-list">
+                                        <!-- Dinámico -->
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Sección: Gestión de Alumnos (Añadir / Eliminar) -->
+                            <div class="glass-panel config-card">
+                                <h3 class="panel-title"><i data-lucide="user-plus"></i> Registrar Nuevo Alumno</h3>
+                                <form id="form-add-student" class="config-form">
+                                    <div class="input-group-row">
+                                        <div class="input-group">
+                                            <label for="st-rut">RUT</label>
+                                            <input type="text" id="st-rut" placeholder="12.345.678-9" required>
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="st-fono">Teléfono (Fono)</label>
+                                            <input type="text" id="st-fono" placeholder="Ej. +56 9 1234 5678" required>
+                                        </div>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="st-name">Nombre Completo</label>
+                                        <input type="text" id="st-name" placeholder="Ej. María Constanza Rojas" required>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="st-email">Correo Electrónico</label>
+                                        <input type="email" id="st-email" placeholder="Ej. maria.rojas@u.cl" required>
+                                    </div>
+                                    <div class="input-group-row">
+                                        <div class="input-group">
+                                            <label for="st-status">Estado</label>
+                                            <select id="st-status" class="select-input">
+                                                <option value="Activo">Activo (Sin Deudas)</option>
+                                                <option value="Bloqueado">Bloqueado (Con Deudas)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="input-group hidden" id="st-debt-group">
+                                        <label for="st-debt">Detalle de la Deuda</label>
+                                        <input type="text" id="st-debt" placeholder="Ej. Debe cable HDMI y cargador">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary btn-full">
+                                        <i data-lucide="user-check"></i> Registrar Alumno
+                                    </button>
+                                </form>
+
+                                <div class="registered-list-container">
+                                    <h4 class="sub-panel-title">Alumnos en la Base de Datos</h4>
+                                    <ul class="admin-data-list" id="admin-students-list">
+                                        <!-- Dinámico -->
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Panel de Configuración de Conexión API -->
+                        <div class="glass-panel settings-card" style="margin-top: 30px;">
+                            <h3 class="panel-title"><i data-lucide="settings"></i> Configuración de Conexión</h3>
+                            <div class="settings-form">
+                                <div class="input-group">
+                                    <label for="script-url-input">URL de la Web App de Google Apps Script</label>
+                                    <input type="text" id="script-url-input" placeholder="https://script.google.com/macros/s/.../exec">
+                                    <span class="input-helper">Obtén esta URL al implementar tu Apps Script como aplicación web.</span>
+                                </div>
+                                <div class="input-group" style="margin-top: 15px;">
+                                    <label for="sheet-url-input">URL de tu Planilla Google Sheets (Opcional)</label>
+                                    <input type="text" id="sheet-url-input" placeholder="https://docs.google.com/spreadsheets/d/.../edit">
+                                    <span class="input-helper">Se detecta automáticamente al conectar tu Web App, o puedes ingresarla manualmente para acceder directamente.</span>
+                                </div>
+                                <button class="btn btn-primary" id="btn-save-settings">
+                                    <i data-lucide="save"></i> Guardar Configuración
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Panel de Diagnóstico de Columnas -->
+                        <div class="glass-panel settings-card" style="margin-top: 30px; border: 1px solid var(--primary-glow);">
+                            <h3 class="panel-title" style="color: var(--primary);"><i data-lucide="shield-alert"></i> Diagnóstico del Google Sheet</h3>
+                            <p class="card-desc" style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px;">Haz clic en el botón para ver qué columnas y configuraciones está detectando el backend en tu planilla de Google.</p>
+                            <button class="btn btn-secondary" id="btn-run-diagnostics" style="width:100%; margin-bottom:12px;">
+                                <i data-lucide="terminal"></i> Ejecutar Diagnóstico de Columnas
+                            </button>
+                            <div id="diagnostics-result" style="display:none; padding:12px; background:#f8fafc; border-radius:6px; border:1px solid #e2e8f0; font-family:monospace; font-size:0.75rem; white-space:pre-wrap; max-height:200px; overflow-y:auto; color:var(--text-primary);">
+                            </div>
+                        </div>
+
+                        <!-- Cerrar Sesión y Enlace Directo -->
+                        <div class="glass-panel quick-links-card" style="margin-top: 30px;">
+                            <h3 class="panel-title"><i data-lucide="link"></i> Enlaces y Acceso Directo</h3>
+                            <p class="card-desc">Para editar los datos de inventario y préstamos de forma directa, te recomendamos acceder a la hoja de cálculo original:</p>
+                            <div class="action-buttons-group flex-row">
+                                <a href="#" target="_blank" class="btn btn-secondary btn-full text-center" id="link-google-sheet">
+                                    <i data-lucide="external-link"></i> Abrir Google Sheet
+                                </a>
+                                <button class="btn btn-danger" id="btn-logout">
+                                    <i data-lucide="log-out"></i> Cerrar Sesión
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- modal para escaneo de cámara -->
+    <div class="modal-overlay hidden" id="scanner-modal">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <h3>Escanear Código de Inventario</h3>
+                <button class="btn-close-modal" id="btn-close-scanner"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="scanner-container">
+                    <div id="reader"></div>
+                </div>
+                <p class="scanner-hint">Apunta el código de barras o QR de tu equipo hacia la cámara.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Confirmar Entrega Física (Edición de códigos) -->
+    <div class="modal-overlay hidden" id="delivery-modal">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <h3>Confirmar Entrega y Retiro Físico</h3>
+                <button class="btn-close-modal" id="btn-close-delivery"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:15px;">
+                    Confirma que estás entregando los equipos físicamente al alumno. Modifica los números de inventario de entrega real si es necesario:
+                </p>
+                <div id="delivery-inputs-container">
+                    <!-- Se genera dinámicamente en JS -->
+                </div>
+                
+                <!-- Agregar Equipo Extra (Fase 22) -->
+                <div style="margin-top: 16px; border-top: 1px solid var(--glass-border); padding-top: 16px; margin-bottom: 16px;">
+                    <label for="delivery-add-equipment-select" style="font-size: 0.8rem; color: var(--text-primary); font-weight: 700; display: block; margin-bottom: 6px;">
+                        ¿Olvidó solicitar algo? Agregar equipo extra:
+                    </label>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <select id="delivery-add-equipment-select" class="select-input" style="flex: 1; min-width: 150px; padding: 8px; border-radius: 6px; border: 1px solid var(--glass-border); background: #fff; font-size: 0.85rem;">
+                            <!-- Cargado dinámicamente -->
+                        </select>
+                        <button class="btn btn-primary" id="btn-delivery-add-equipment" style="display:flex; align-items:center; gap:4px; padding: 8px 14px; font-size: 0.8rem; font-weight: 700; border-radius: 8px; white-space: nowrap;">
+                            <i data-lucide="plus" style="width:15px; height:15px;"></i> Agregar
+                        </button>
+                    </div>
+                </div>
+
+                <div style="margin-top: 16px; border-top: 1px solid var(--glass-border); padding-top: 16px;">
+                    <label for="delivery-global-obs" style="font-size: 0.8rem; color: var(--text-primary); font-weight: 700; display: block; margin-bottom: 6px;">
+                        Observaciones de Entrega (Opcional):
+                    </label>
+                    <textarea id="delivery-global-obs" placeholder="Ej: Rayadura en trípode, bolso de cámara sin correa, etc." class="select-input" style="width: 100%; min-height: 60px; padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border); background:#fff; font-family: inherit; font-size: 0.85rem; resize: vertical;" autocomplete="off"></textarea>
+                </div>
+                <button class="btn btn-success btn-full" id="btn-confirm-delivery" style="margin-top:20px;">
+                    <i data-lucide="check-circle"></i> Confirmar Entrega Física
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Confirmar Devolución Física (Devolución de equipos) -->
+    <div class="modal-overlay hidden" id="return-modal">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <h3>Confirmar Devolución de Equipos</h3>
+                <button class="btn-close-modal" id="btn-close-return"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:15px;">
+                    Confirma los equipos que están ingresando físicamente al pañol:
+                </p>
+                <div id="return-items-container" style="background: rgba(255, 255, 255, 0.4); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 15px;">
+                    <!-- Se genera dinámicamente en JS -->
+                </div>
+                <div style="margin-top: 16px; border-top: 1px solid var(--glass-border); padding-top: 16px;">
+                    <label for="return-global-obs" style="font-size: 0.8rem; color: var(--text-primary); font-weight: 700; display: block; margin-bottom: 6px;">
+                        Observaciones de la Devolución (Opcional):
+                    </label>
+                    <textarea id="return-global-obs" placeholder="Ej: Falta cable HDMI, trípode sin correa, cable cortado, todo en buen estado, etc." class="select-input" style="width: 100%; min-height: 60px; padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border); background:#fff; font-family: inherit; font-size: 0.85rem; resize: vertical;" autocomplete="off"></textarea>
+                </div>
+                <button class="btn btn-success btn-full" id="btn-confirm-return" style="margin-top:20px;">
+                    <i data-lucide="rotate-ccw"></i> Confirmar Devolución
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Éxito de Solicitud -->
+    <div class="modal-overlay hidden" id="success-modal">
+        <div class="modal-card glass-panel" style="max-width: 460px; text-align: center; padding: 26px;">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 16px;">
+                <div style="width: 56px; height: 56px; background: rgba(16, 185, 129, 0.08); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--success);">
+                    <i data-lucide="check-circle" style="width: 32px; height: 32px;"></i>
+                </div>
+                <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--text-primary); margin: 0;">¡Solicitud Enviada con Éxito!</h3>
+                <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.45; margin: 0 0 4px 0;">
+                    La solicitud ha sido registrada correctamente en el sistema. Se ha enviado un comprobante a tu correo institucional.
+                </p>
+                <div id="success-loan-summary" style="width: 100%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: var(--border-radius-sm); padding: 14px; text-align: left; font-size: 0.82rem; display: flex; flex-direction: column; gap: 8px;">
+                    <!-- Se llena dinámicamente en JS -->
+                </div>
+                <button class="btn btn-primary btn-full" id="btn-close-success" style="margin-top: 10px;">
+                    <i data-lucide="arrow-left"></i> Volver al Inicio
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notificaciones flotantes toast -->
+    <div id="toast-container"></div>
+
+    <!-- Inicialización de Scripts -->
+    <script src="app.js"></script>
+</body>
+</html>

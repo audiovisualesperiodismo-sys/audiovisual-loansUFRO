@@ -1,0 +1,23 @@
+{
+  "name": "AVP UFRO - Gestión de Préstamos",
+  "short_name": "AVP UFRO",
+  "description": "Sistema de Gestión y Registro de Préstamos de Equipamiento Audiovisual - UFRO",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "logo.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}
