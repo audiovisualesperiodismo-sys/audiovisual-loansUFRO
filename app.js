@@ -742,6 +742,15 @@ function showSection(sectionId) {
 function renderLoansModule() {
     const categories = [...new Set(appState.inventory.map(item => item.category))];
     
+    if (categories.length > 0) {
+        const hasCameras = categories.find(c => c.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === "camaras");
+        if (hasCameras) {
+            appState.selectedCategory = hasCameras;
+        } else if (!categories.includes(appState.selectedCategory)) {
+            appState.selectedCategory = categories[0];
+        }
+    }
+    
     dom.categoryTabs.innerHTML = '';
     categories.forEach(cat => {
         const li = document.createElement('li');
