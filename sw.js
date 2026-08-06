@@ -1,10 +1,10 @@
-const CACHE_NAME = 'avp-ufro-cache-v1';
+const CACHE_NAME = 'avp-ufro-cache-v2';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
-  './logo.jpg'
+  './logo.png'
 ];
 
 // Install Service Worker
