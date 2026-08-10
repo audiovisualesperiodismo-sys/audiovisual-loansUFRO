@@ -847,6 +847,9 @@ input:checked + .slider:before {
     border-radius: var(--border-radius-md);
     padding: 14px;
     margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
 
 .student-info-header {
