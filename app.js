@@ -1959,9 +1959,28 @@ function renderAdminLoans(filter = "all") {
                 </div>
             </td>
             <td>
-                <div style="display:flex; flex-direction:column; align-items:flex-start;">
-                    <span>${loan.status === 'Devuelto' ? formatDisplayDate(loan.dateIn) : (loan.status === 'Retirado' ? 'En Tránsito' : '-')}</span>
-                    ${loan.status === 'Solicitado' && loan.progDevolucion ? `<small style="color:var(--text-secondary); font-size:0.72rem; font-weight:500;" title="Devolución programada">Dev: ${formatDisplayDate(loan.progDevolucion)}</small>` : ''}
+                <div style="display:flex; flex-direction:column; align-items:flex-start; gap: 2px;">
+                    ${(() => {
+                        const prevDate = loan.progDevolucion ? formatDisplayDate(loan.progDevolucion) : '-';
+                        if (loan.status === 'Devuelto') {
+                            return `
+                                <span style="font-weight: 500; color: var(--success);">Devuelto: ${formatDisplayDate(loan.dateIn)}</span>
+                                <small style="color: var(--text-secondary); font-size: 0.72rem;">Pactado: ${prevDate}</small>
+                            `;
+                        } else if (loan.status === 'Retirado') {
+                            return `
+                                <span style="font-weight: 500; color: var(--primary);">En Tránsito</span>
+                                <small style="color: var(--text-secondary); font-size: 0.72rem;">Pactado: ${prevDate}</small>
+                            `;
+                        } else if (loan.status === 'Solicitado') {
+                            return `
+                                <span style="font-weight: 500; color: var(--text-secondary);">Pendiente</span>
+                                <small style="color: var(--text-secondary); font-size: 0.72rem;">Pactado: ${prevDate}</small>
+                            `;
+                        } else {
+                            return `<span style="color: var(--text-secondary); font-weight: 500;">-</span>`;
+                        }
+                    })()}
                 </div>
             </td>
             <td>
