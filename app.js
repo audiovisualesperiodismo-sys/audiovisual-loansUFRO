@@ -944,18 +944,13 @@ async function executeVerifyStudentApi(rut) {
 function getDaysOverdue(loan) {
     if (loan.status !== "Retirado" || !loan.progDevolucion) return 0;
     
-    // Parse progDevolucion (YYYY-MM-DD)
-    const parts = loan.progDevolucion.split(' ')[0].split('-');
-    if (parts.length < 3) return 0;
-    const dueYear = parseInt(parts[0], 10);
-    const dueMonth = parseInt(parts[1], 10) - 1;
-    const dueDay = parseInt(parts[2], 10);
-    
-    const dueDate = new Date(dueYear, dueMonth, dueDay);
+    const dueDate = parseDateString(loan.progDevolucion);
+    if (!dueDate) return 0;
     
     // Current date (midnight to be fair)
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    dueDate.setHours(0, 0, 0, 0);
     
     const diffTime = today - dueDate;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -1984,11 +1979,11 @@ function renderAdminLoans(filter = "all") {
                                 `;
                             } else {
                                 if (loan.progDevolucion) {
-                                    const progParts = loan.progDevolucion.split(' ')[0].split('-');
-                                    if (progParts.length >= 3) {
-                                        const progDate = new Date(parseInt(progParts[0], 10), parseInt(progParts[1], 10) - 1, parseInt(progParts[2], 10));
+                                    const progDate = parseDateString(loan.progDevolucion);
+                                    if (progDate) {
                                         const now = new Date();
                                         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                                        progDate.setHours(0, 0, 0, 0);
                                         const diffTime = progDate - today;
                                         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                                         if (diffDays > 0) {
@@ -2671,6 +2666,31 @@ function cleanRut(rut) {
     return rut.replace(/[^0-9kK]/g, '');
 }
 
+function parseDateString(dateStr) {
+    if (!dateStr) return null;
+    if (dateStr instanceof Date) return dateStr;
+    
+    const cleanStr = dateStr.toString().trim().split(' ')[0];
+    const parts = cleanStr.includes('-') ? cleanStr.split('-') : cleanStr.split('/');
+    if (parts.length < 3) return null;
+    
+    let year, month, day;
+    if (parts[0].length === 4) {
+        year = parseInt(parts[0], 10);
+        month = parseInt(parts[1], 10) - 1;
+        day = parseInt(parts[2], 10);
+    } else if (parts[2].length === 4) {
+        year = parseInt(parts[2], 10);
+        month = parseInt(parts[1], 10) - 1;
+        day = parseInt(parts[0], 10);
+    } else {
+        return null;
+    }
+    
+    if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
+    return new Date(year, month, day);
+}
+
 function getNowFormatted() {
     const d = new Date();
     const pad = (n) => n.toString().padStart(2, '0');
@@ -2709,15 +2729,13 @@ function showToast(message, type = "info") {
 function isLoanReturnedLate(loan) {
     if (loan.status !== "Devuelto" || !loan.dateIn || !loan.progDevolucion) return false;
     
-    // Parse progDevolucion (YYYY-MM-DD)
-    const progParts = loan.progDevolucion.split(' ')[0].split('-');
-    if (progParts.length < 3) return false;
-    const progDate = new Date(parseInt(progParts[0], 10), parseInt(progParts[1], 10) - 1, parseInt(progParts[2], 10));
+    const progDate = parseDateString(loan.progDevolucion);
+    const realDate = parseDateString(loan.dateIn);
     
-    // Parse dateIn (YYYY-MM-DD)
-    const realParts = loan.dateIn.split(' ')[0].split('-');
-    if (realParts.length < 3) return false;
-    const realDate = new Date(parseInt(realParts[0], 10), parseInt(realParts[1], 10) - 1, parseInt(realParts[2], 10));
+    if (!progDate || !realDate) return false;
+    
+    progDate.setHours(0, 0, 0, 0);
+    realDate.setHours(0, 0, 0, 0);
     
     return realDate > progDate;
 }
