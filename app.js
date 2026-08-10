@@ -982,7 +982,7 @@ function processStudentVerificationResult(student) {
     const overdue = checkStudentOverdueLoans(student.rut);
     if (overdue.length > 0) {
         student.status = "Bloqueado";
-        const listMsg = overdue.map(o => `${o.loan.item} (Debió entregarse el ${o.loan.progDevolucion.split(' ')[0]}, ${o.days} días de atraso)`).join(', ');
+        const listMsg = overdue.map(o => `${o.loan.item} (Debió entregarse el ${formatDisplayDate(o.loan.progDevolucion).split(' ')[0]}, ${o.days} días de atraso)`).join(', ');
         student.debt = `Bloqueo Automático: Préstamo atrasado de ${listMsg}`;
     }
     
@@ -1050,8 +1050,8 @@ function showSuccessModal(details) {
                 </ul>
             </div>
             <div style="margin-top: 4px; display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; font-size:0.75rem; border-top:1px solid #e2e8f0; padding-top:8px; color:var(--text-secondary);">
-                <span><strong>Retiro Programado:</strong><br>${details.progRetiro}</span>
-                <span style="text-align:right; min-width:120px;"><strong>Devolución Programada:</strong><br>${details.progDevolucion}</span>
+                <span><strong>Retiro Programado:</strong><br>${formatDisplayDate(details.progRetiro)}</span>
+                <span style="text-align:right; min-width:120px;"><strong>Devolución Programada:</strong><br>${formatDisplayDate(details.progDevolucion)}</span>
             </div>
         `;
     }
@@ -1950,18 +1950,18 @@ function renderAdminLoans(filter = "all") {
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; align-items:flex-start;">
-                    <span>${loan.dateOut || '-'}</span>
+                    <span>${formatDisplayDate(loan.dateOut)}</span>
                 </div>
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; align-items:flex-start;">
-                    <span>${loan.status === 'Solicitado' ? 'Pendiente' : (loan.dateDeliver || loan.dateOut || '-')}</span>
+                    <span>${loan.status === 'Solicitado' ? 'Pendiente' : formatDisplayDate(loan.dateDeliver || loan.dateOut)}</span>
                 </div>
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; align-items:flex-start;">
-                    <span>${loan.status === 'Devuelto' ? loan.dateIn : (loan.status === 'Retirado' ? 'En Tránsito' : '-')}</span>
-                    ${loan.status === 'Solicitado' && loan.progDevolucion ? `<small style="color:var(--text-secondary); font-size:0.72rem; font-weight:500;" title="Devolución programada">Dev: ${loan.progDevolucion}</small>` : ''}
+                    <span>${loan.status === 'Devuelto' ? formatDisplayDate(loan.dateIn) : (loan.status === 'Retirado' ? 'En Tránsito' : '-')}</span>
+                    ${loan.status === 'Solicitado' && loan.progDevolucion ? `<small style="color:var(--text-secondary); font-size:0.72rem; font-weight:500;" title="Devolución programada">Dev: ${formatDisplayDate(loan.progDevolucion)}</small>` : ''}
                 </div>
             </td>
             <td>
@@ -2691,6 +2691,22 @@ function parseDateString(dateStr) {
     return new Date(year, month, day);
 }
 
+function formatDisplayDate(dateStr) {
+    if (!dateStr || dateStr === '-') return '-';
+    
+    const parts = dateStr.toString().trim().split(' ');
+    const datePart = parts[0];
+    const timePart = parts[1] || '';
+    
+    const dateObj = parseDateString(datePart);
+    if (!dateObj) return dateStr;
+    
+    const pad = (n) => n.toString().padStart(2, '0');
+    const formattedDate = `${pad(dateObj.getDate())}/${pad(dateObj.getMonth() + 1)}/${dateObj.getFullYear()}`;
+    
+    return timePart ? `${formattedDate} ${timePart}` : formattedDate;
+}
+
 function getNowFormatted() {
     const d = new Date();
     const pad = (n) => n.toString().padStart(2, '0');
@@ -2810,9 +2826,9 @@ function exportLoansToExcel() {
             loan.item || "",
             loan.code || "",
             loan.subject || "",
-            loan.dateOut || "",
-            loan.status === 'Solicitado' ? "Pendiente" : (loan.dateDeliver || loan.dateOut || ""),
-            loan.status === 'Devuelto' ? (loan.dateIn || "") : (loan.status === 'Retirado' ? 'En Transito' : '-'),
+            formatDisplayDate(loan.dateOut),
+            loan.status === 'Solicitado' ? "Pendiente" : formatDisplayDate(loan.dateDeliver || loan.dateOut),
+            loan.status === 'Devuelto' ? formatDisplayDate(loan.dateIn) : (loan.status === 'Retirado' ? 'En Transito' : '-'),
             loan.status || "",
             loan.obs || "",
             daysOverdue > 0 ? `${daysOverdue}` : "0",
