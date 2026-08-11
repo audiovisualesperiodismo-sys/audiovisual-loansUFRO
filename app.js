@@ -2715,7 +2715,12 @@ function formatDisplayDate(dateStr) {
     
     const parts = dateStr.toString().trim().split(' ');
     const datePart = parts[0];
-    const timePart = parts[1] || '';
+    let timePart = parts[1] || '';
+    
+    // Si la hora es 00:00 o 00:00:00, no es necesario mostrarla
+    if (timePart === '00:00' || timePart === '00:00:00') {
+        timePart = '';
+    }
     
     const dateObj = parseDateString(datePart);
     if (!dateObj) return dateStr;
