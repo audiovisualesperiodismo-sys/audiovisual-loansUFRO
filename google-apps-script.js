@@ -71,9 +71,63 @@ function testConnection() {
       Logger.log("ERROR CRÍTICO AL ENVIAR CORREO DIAGNÓSTICO: " + mailErr.toString());
       Logger.log("Sugerencia: Si el error dice 'Se requiere autorización' o similar, vuelve a ejecutar el script y asegúrate de otorgar todos los permisos solicitados.");
     }
-    
   } catch (e) {
     Logger.log("ERROR al probar conexión: " + e.toString());
+  }
+}
+
+function autoUpgradeHeaders(ss) {
+  if (!ss) return;
+  
+  const loanSheet = ss.getSheetByName("Préstamos");
+  if (loanSheet) {
+    const values = loanSheet.getDataRange().getValues();
+    if (values.length > 0) {
+      const currentHeaders = values[0].map(h => h.toString().trim().toLowerCase());
+      const expected = [
+        { name: "ID Préstamo", match: "id" },
+        { name: "RUT Alumno", match: "rut" },
+        { name: "Nombre Alumno", match: "nombre" },
+        { name: "Email Alumno", match: "email" },
+        { name: "Equipo", match: "equipo" },
+        { name: "Código Inventario", match: "codigo" },
+        { name: "Fecha Registro", match: "registro" },
+        { name: "Fecha Retiro", match: "retiro" },
+        { name: "Fecha Devolución", match: "devolucion" },
+        { name: "Estado", match: "estado" },
+        { name: "Observaciones", match: "observacio" },
+        { name: "Fecha Retiro Programada", match: "retiro programada" },
+        { name: "Fecha Devolución Programada", match: "devolucion programada" },
+        { name: "Asignatura", match: "asignatura" },
+        { name: "Observación Devolución", match: "observacion devolucion" },
+        { name: "Días Atraso", match: "atraso" }
+      ];
+      
+      let modified = false;
+      const headersToAppend = [];
+      
+      expected.forEach(item => {
+        const found = currentHeaders.some(h => {
+          const norm = h.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+          const itemMatch = item.match.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+          if (itemMatch === "retiro" && norm.includes("programad")) return false;
+          if (itemMatch === "devolucion" && norm.includes("programad")) return false;
+          return norm.includes(itemMatch);
+        });
+        
+        if (!found) {
+          headersToAppend.push(item.name);
+          modified = true;
+        }
+      });
+      
+      if (modified && headersToAppend.length > 0) {
+        const lastCol = loanSheet.getLastColumn();
+        const range = loanSheet.getRange(1, lastCol + 1, 1, headersToAppend.length);
+        range.setValues([headersToAppend]);
+        SpreadsheetApp.flush();
+      }
+    }
   }
 }
 
@@ -146,6 +200,7 @@ function doGet(e) {
 
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    autoUpgradeHeaders(ss);
     
     if (action === "getInitData") {
       const sheet = ss.getSheetByName("Inventario");
@@ -204,6 +259,7 @@ function doPost(e) {
   
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    autoUpgradeHeaders(ss);
     const action = e.parameter.action;
     const postData = JSON.parse(e.postData.contents);
     
@@ -637,6 +693,7 @@ function executeCreateLoan(ss, payload) {
     if (obsIdx !== -1) newRow[obsIdx] = items.map(() => "").join("\n");
     
     loanSheet.appendRow(newRow);
+    SpreadsheetApp.flush();
     
     try {
       sendSolicitudEmail(student, items, timestamp, progRetiro, progDevolucion, subject, loanId);
@@ -774,6 +831,7 @@ function executeDeliverLoan(ss, payload) {
     } else if (dateOutIdx !== -1) {
       loanSheet.getRange(rowIndex, dateOutIdx + 1).setValue(timestamp); // Fallback: overwrite request date
     }
+    SpreadsheetApp.flush();
     
     try {
       sendRetiroFisicoEmail(studentName, studentEmail, items, timestamp, loanId);
@@ -887,23 +945,10 @@ function executeReturnLoan(ss, payload) {
       let daysOverdue = 0;
       const progDevolucionVal = progDevolucionIdx !== -1 ? loanValues[rowIndex - 1][progDevolucionIdx] : "";
       if (progDevolucionVal) {
-        let progDate = null;
-        if (progDevolucionVal instanceof Date) {
-          progDate = progDevolucionVal;
-        } else {
-          const parts = progDevolucionVal.toString().split(" ")[0].split("-");
-          if (parts.length >= 3) {
-            progDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-          }
-        }
+        const progDate = parseDateString(progDevolucionVal);
+        const realDate = parseDateString(timestamp);
         
-        if (progDate) {
-          let realDate = new Date();
-          const timeParts = timestamp.split(" ")[0].split("-");
-          if (timeParts.length >= 3) {
-            realDate = new Date(parseInt(timeParts[0], 10), parseInt(timeParts[1], 10) - 1, parseInt(timeParts[2], 10));
-          }
-          
+        if (progDate && realDate) {
           progDate.setHours(0,0,0,0);
           realDate.setHours(0,0,0,0);
           
@@ -916,6 +961,7 @@ function executeReturnLoan(ss, payload) {
       }
       loanSheet.getRange(rowIndex, daysOverdueIdx + 1).setValue(daysOverdue);
     }
+    SpreadsheetApp.flush();
     
     try {
       sendDevolucionEmail(studentName, studentEmail, returnedItems, timestamp, loanId);
@@ -1032,6 +1078,7 @@ function executeCancelLoan(ss, payload) {
     if (overallStatus === "Anulado" && dateInIdx !== -1) {
       loanSheet.getRange(rowIndex, dateInIdx + 1).setValue("");
     }
+    SpreadsheetApp.flush();
     
     try {
       sendAnulacionEmail(studentName, studentEmail, cancelledItems, timestamp, loanId);
@@ -1400,4 +1447,29 @@ function formatDate(dateObj) {
     return `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
   }
   return dateObj ? dateObj.toString() : "";
+}
+
+function parseDateString(dateStr) {
+  if (!dateStr) return null;
+  if (dateStr instanceof Date) return dateStr;
+  
+  const cleanStr = dateStr.toString().trim().split(" ")[0];
+  const parts = cleanStr.includes("-") ? cleanStr.split("-") : cleanStr.split("/");
+  if (parts.length < 3) return null;
+  
+  let year, month, day;
+  if (parts[0].length === 4) {
+    year = parseInt(parts[0], 10);
+    month = parseInt(parts[1], 10) - 1;
+    day = parseInt(parts[2], 10);
+  } else if (parts[2].length === 4) {
+    year = parseInt(parts[2], 10);
+    month = parseInt(parts[1], 10) - 1;
+    day = parseInt(parts[0], 10);
+  } else {
+    return null;
+  }
+  
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
+  return new Date(year, month, day);
 }
