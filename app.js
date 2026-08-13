@@ -1518,7 +1518,7 @@ async function executeDeliverLoanApi(loanId, items) {
         
         const data = await response.json();
         if (data.status === "success") {
-            showToast(data.message || "Retiro registrado y correo enviado correctamente", "success");
+            showToast(data.message || "[FALLBACK] Retiro registrado (el servidor no envió el detalle de los equipos)", "success");
             loadData();
         } else {
             showToast(data.message || "Error al registrar entrega.", "danger");
