@@ -1439,6 +1439,8 @@ async function confirmPhysicalDelivery() {
         });
     }
     
+    console.log("[DEBUG AVP] Confirmando entrega física con items:", itemsPayload);
+    
     dom.deliveryModal.classList.add('hidden');
     
     if (CONFIG.demoMode) {
