@@ -823,7 +823,7 @@ function executeDeliverLoan(ss, payload) {
     
     if (itemIdx !== -1) loanSheet.getRange(rowIndex, itemIdx + 1).setValue(currentItems.join("\n"));
     if (codeIdx !== -1) loanSheet.getRange(rowIndex, codeIdx + 1).setValue(currentCodes.join("\n"));
-    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue(overallStatus);
+    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue(currentStatuses.join("\n"));
     if (obsIdx !== -1) loanSheet.getRange(rowIndex, obsIdx + 1).setValue(currentObs.join("\n"));
     
     if (dateDeliverIdx !== -1) {
@@ -888,8 +888,19 @@ function executeReturnLoan(ss, payload) {
     const expectedCount = currentItems.length;
     
     const currentCodes = splitCellValues(codeIdx !== -1 ? loanValues[rowIndex - 1][codeIdx] : "", expectedCount);
-    const currentStatuses = splitCellValues(statusIdx !== -1 ? loanValues[rowIndex - 1][statusIdx] : "", expectedCount);
-    const currentDatesIn = splitCellValues(dateInIdx !== -1 ? loanValues[rowIndex - 1][dateInIdx] : "", expectedCount);
+    
+    const rawStatus = statusIdx !== -1 ? loanValues[rowIndex - 1][statusIdx].toString().trim() : "Solicitado";
+    const currentStatuses = rawStatus.includes("\n") ? splitCellValues(rawStatus, expectedCount) : new Array(expectedCount).fill(rawStatus);
+    
+    const rawDateIn = dateInIdx !== -1 && loanValues[rowIndex - 1][dateInIdx] ? loanValues[rowIndex - 1][dateInIdx] : "";
+    let currentDatesIn = [];
+    if (rawDateIn instanceof Date) {
+      currentDatesIn = new Array(expectedCount).fill(rawDateIn);
+    } else if (rawDateIn.toString().includes("\n")) {
+      currentDatesIn = splitCellValues(rawDateIn.toString(), expectedCount);
+    } else {
+      currentDatesIn = new Array(expectedCount).fill(rawDateIn);
+    }
     
     const returnedItems = [];
     
@@ -934,8 +945,9 @@ function executeReturnLoan(ss, payload) {
     if (returnedItems.length === 0) throw new Error("No se encontraron registros de préstamo activos para devolver.");
     
     // Save back
-    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue("Devuelto");
-    if (dateInIdx !== -1) loanSheet.getRange(rowIndex, dateInIdx + 1).setValue(timestamp);
+    const formattedDatesIn = currentDatesIn.map(function(d) { return d ? formatDate(d) : ""; }).join("\n");
+    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue(currentStatuses.join("\n"));
+    if (dateInIdx !== -1) loanSheet.getRange(rowIndex, dateInIdx + 1).setValue(formattedDatesIn);
     
     // Guardar observaciones de devolución
     if (obsReturnIdx !== -1) {
@@ -1025,7 +1037,9 @@ function executeCancelLoan(ss, payload) {
     const expectedCount = currentItems.length;
     
     const currentCodes = splitCellValues(codeIdx !== -1 ? loanValues[rowIndex - 1][codeIdx] : "", expectedCount);
-    const currentStatuses = splitCellValues(statusIdx !== -1 ? loanValues[rowIndex - 1][statusIdx] : "", expectedCount);
+    
+    const rawStatus = statusIdx !== -1 ? loanValues[rowIndex - 1][statusIdx].toString().trim() : "Solicitado";
+    const currentStatuses = rawStatus.includes("\n") ? splitCellValues(rawStatus, expectedCount) : new Array(expectedCount).fill(rawStatus);
     
     const cancelledItems = [];
     
@@ -1085,7 +1099,7 @@ function executeCancelLoan(ss, payload) {
       overallStatus = "Devuelto";
     }
     
-    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue(overallStatus);
+    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue(currentStatuses.join("\n"));
     if (codeIdx !== -1) loanSheet.getRange(rowIndex, codeIdx + 1).setValue(currentCodes.join("\n"));
     if (overallStatus === "Anulado" && dateInIdx !== -1) {
       loanSheet.getRange(rowIndex, dateInIdx + 1).setValue("");
