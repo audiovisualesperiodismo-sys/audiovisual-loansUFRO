@@ -833,13 +833,16 @@ function executeDeliverLoan(ss, payload) {
     }
     SpreadsheetApp.flush();
     
+    const extrasInfo = extraItems.length > 0 ? extraItems.map(function(x) { return x.name; }).join(", ") : "Ninguno";
+    const msg = "Retiro registrado. Equipos: " + currentItems.join(" | ") + " (Extras: " + extrasInfo + ")";
+    
     try {
       sendRetiroFisicoEmail(studentName, studentEmail, items, timestamp, loanId);
     } catch (emailError) {
       Logger.log("ERROR al enviar email de retiro: " + emailError.toString());
-      return { status: "success", message: "Retiro físico registrado. (Nota: No se pudo enviar el correo de comprobación por falta de destinatario o configuración)." };
+      return { status: "success", message: msg + ". (Nota: No se pudo enviar el correo de comprobación)." };
     }
-    return { status: "success", message: "Retiro físico registrado." };
+    return { status: "success", message: msg };
   } catch (error) {
     return { status: "error", message: error.toString() };
   } finally {
