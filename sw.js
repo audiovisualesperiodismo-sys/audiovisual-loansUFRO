@@ -1,4 +1,4 @@
-const CACHE_NAME = 'avp-ufro-cache-v4';
+const CACHE_NAME = 'avp-ufro-cache-v5';
 const ASSETS = [
   './',
   './index.html',

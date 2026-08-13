@@ -920,10 +920,13 @@ function executeReturnLoan(ss, payload) {
         }
         
         if (invRowIndex !== -1) {
-          const rawDisp = invSheet.getRange(invRowIndex, invDispIdx + 1).getValue();
-          const totalVal = invSheet.getRange(invRowIndex, invTotalIdx + 1).getValue();
-          const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? parseInt(totalVal) || 0 : parseInt(rawDisp) || 0;
-          invSheet.getRange(invRowIndex, invDispIdx + 1).setValue(Math.min(parseInt(totalVal) || 99, currentDisp + 1));
+          const rawDisp = invValues[invRowIndex - 1][invDispIdx];
+          const totalVal = parseInt(invValues[invRowIndex - 1][invTotalIdx]) || 0;
+          const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+          const newDisp = Math.min(totalVal, currentDisp + 1);
+          
+          invSheet.getRange(invRowIndex, invDispIdx + 1).setValue(newDisp);
+          invValues[invRowIndex - 1][invDispIdx] = newDisp; // Sync in-memory array for next iterations
         }
       }
     }
@@ -966,13 +969,16 @@ function executeReturnLoan(ss, payload) {
     }
     SpreadsheetApp.flush();
     
+    const returnedInfo = returnedItems.map(function(x) { return x.name + " (" + x.code + ")"; }).join(" | ");
+    const msg = "Devolución procesada. Equipos: " + returnedInfo;
+    
     try {
       sendDevolucionEmail(studentName, studentEmail, returnedItems, timestamp, loanId);
     } catch (emailError) {
       Logger.log("ERROR al enviar email de devolución: " + emailError.toString());
-      return { status: "success", message: "Devolución procesada. (Nota: No se pudo enviar el correo de comprobación)." };
+      return { status: "success", message: msg + ". (Nota: No se pudo enviar el correo de comprobación)." };
     }
-    return { status: "success", message: "Devolución física procesada con éxito." };
+    return { status: "success", message: msg };
   } catch (error) {
     return { status: "error", message: error.toString() };
   } finally {
@@ -1054,10 +1060,13 @@ function executeCancelLoan(ss, payload) {
         }
         
         if (invRowIndex !== -1) {
-          const rawDisp = invSheet.getRange(invRowIndex, invDispIdx + 1).getValue();
-          const totalVal = invSheet.getRange(invRowIndex, invTotalIdx + 1).getValue();
-          const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? parseInt(totalVal) || 0 : parseInt(rawDisp) || 0;
-          invSheet.getRange(invRowIndex, invDispIdx + 1).setValue(Math.min(parseInt(totalVal) || 99, currentDisp + 1));
+          const rawDisp = invValues[invRowIndex - 1][invDispIdx];
+          const totalVal = parseInt(invValues[invRowIndex - 1][invTotalIdx]) || 0;
+          const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+          const newDisp = Math.min(totalVal, currentDisp + 1);
+          
+          invSheet.getRange(invRowIndex, invDispIdx + 1).setValue(newDisp);
+          invValues[invRowIndex - 1][invDispIdx] = newDisp; // Sync in-memory array for next iterations
         }
         
         cancelledItems.push({ name: itemName, code: itemCode });

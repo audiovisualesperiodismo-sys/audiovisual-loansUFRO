@@ -1695,7 +1695,7 @@ async function executeReturnApi(loanId, obsReturn) {
         
         const data = await response.json();
         if (data.status === "success") {
-            showToast("Devolución procesada e email enviado", "success");
+            showToast(data.message || "Devolución procesada e email enviado correctamente", "success");
             await loadData();
             renderAdminLoans(appState.activeAdminLoanFilter);
         } else {
