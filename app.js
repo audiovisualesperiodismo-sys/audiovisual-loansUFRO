@@ -39,7 +39,8 @@ let appState = {
     activeAdminLoanFilter: "all",
     currentDeliveryLoanId: null,
     currentReturnLoanId: null,
-    tempDeliveryItems: []
+    tempDeliveryItems: [],
+    adminStudentsSearchQuery: ""
 };
 
 // Referencias DOM
@@ -87,6 +88,7 @@ const dom = {
     stDebtGroup: document.getElementById('st-debt-group'),
     adminEquipmentList: document.getElementById('admin-equipment-list'),
     adminStudentsList: document.getElementById('admin-students-list'),
+    adminStudentsSearch: document.getElementById('admin-students-search'),
     btnSaveSettings: document.getElementById('btn-save-settings'),
     scriptUrlInput: document.getElementById('script-url-input'),
     sheetUrlInput: document.getElementById('sheet-url-input'),
@@ -368,6 +370,13 @@ function initEventListeners() {
     dom.modeToggle.addEventListener('change', (e) => {
         setDemoMode(e.target.checked);
     });
+    
+    if (dom.adminStudentsSearch) {
+        dom.adminStudentsSearch.addEventListener('input', (e) => {
+            appState.adminStudentsSearchQuery = e.target.value.toLowerCase().trim();
+            renderAdminStudentsList();
+        });
+    }
     
     dom.btnRefresh.addEventListener('click', () => {
         loadData();
@@ -2417,7 +2426,23 @@ function renderAdminStudentsList() {
         return;
     }
     
-    appState.students.forEach(student => {
+    let filteredStudents = appState.students;
+    if (appState.adminStudentsSearchQuery) {
+        const query = appState.adminStudentsSearchQuery.toLowerCase();
+        filteredStudents = appState.students.filter(student => {
+            const fullName = `${student.name} ${student.lastname || ""}`.toLowerCase();
+            const rut = student.rut.replace(/[^0-9kK]/g, '').toLowerCase();
+            const rawRut = student.rut.toLowerCase();
+            return fullName.includes(query) || rut.includes(query) || rawRut.includes(query);
+        });
+    }
+    
+    if (filteredStudents.length === 0) {
+        dom.adminStudentsList.innerHTML = '<li class="table-empty"><p>No se encontraron alumnos que coincidan con la búsqueda.</p></li>';
+        return;
+    }
+    
+    filteredStudents.forEach(student => {
         const li = document.createElement('li');
         li.className = 'admin-list-item';
         

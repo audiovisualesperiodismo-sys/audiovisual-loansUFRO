@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=26.0">
+    <link rel="stylesheet" href="styles.css?v=27.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -544,7 +544,13 @@
                                 </form>
 
                                 <div class="registered-list-container">
-                                    <h4 class="sub-panel-title">Alumnos en la Base de Datos</h4>
+                                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px; border-bottom: 1px solid var(--glass-border); padding-bottom:10px;">
+                                        <h4 class="sub-panel-title" style="margin:0;">Alumnos en la Base de Datos</h4>
+                                        <div style="position:relative; width: 100%; max-width: 250px; display:flex; align-items:center;">
+                                            <input type="text" id="admin-students-search" placeholder="Buscar por nombre o RUT..." class="select-input" style="width:100%; padding: 8px 12px 8px 32px; border-radius: 6px; font-size: 0.8rem; height: 34px; border: 1px solid var(--glass-border); background: #fff;" autocomplete="off">
+                                            <i data-lucide="search" style="position:absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--text-secondary); pointer-events:none;"></i>
+                                        </div>
+                                    </div>
                                     <ul class="admin-data-list" id="admin-students-list">
                                         <!-- Dinámico -->
                                     </ul>
@@ -713,6 +719,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=26.0"></script>
+    <script src="app.js?v=27.0"></script>
 </body>
 </html>
