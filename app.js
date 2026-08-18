@@ -2432,10 +2432,21 @@ function renderAdminStudentsList() {
                 <p>RUT: ${student.rut} | Fono: ${student.fono || '-'}</p>
                 <small style="${badgeColor}">Estado: ${displayStatus} ${isBlocked ? `(${student.debt})` : ''}</small>
             </div>
-            <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}">
-                <i data-lucide="trash-2"></i>
-            </button>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button class="btn-lock-toggle-student" data-rut="${student.rut}" data-name="${student.name}" data-blocked="${isBlocked}" style="background:${isBlocked ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'}; color:${isBlocked ? 'var(--success)' : 'var(--danger)'}; border:none; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s; padding:0;" title="${isBlocked ? 'Desbloquear Alumno' : 'Bloquear Alumno'}">
+                    <i data-lucide="${isBlocked ? 'unlock' : 'lock'}" style="width:16px; height:16px;"></i>
+                </button>
+                <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}">
+                    <i data-lucide="trash-2"></i>
+                </button>
+            </div>
         `;
+        li.querySelector('.btn-lock-toggle-student').addEventListener('click', (e) => {
+            const rut = e.currentTarget.getAttribute('data-rut');
+            const name = e.currentTarget.getAttribute('data-name');
+            const blocked = e.currentTarget.getAttribute('data-blocked') === 'true';
+            toggleStudentSanction(rut, name, blocked);
+        });
         li.querySelector('.btn-delete-item').addEventListener('click', (e) => {
             const rut = e.currentTarget.getAttribute('data-rut');
             const name = e.currentTarget.getAttribute('data-name');
@@ -2615,6 +2626,81 @@ async function deleteStudentConfig(rut, name) {
         } catch (e) {
             console.error(e);
             showToast("Error.", "danger");
+        }
+    }
+}
+
+async function toggleStudentSanction(rut, name, blocked) {
+    if (blocked) {
+        if (!confirm(`¿Levantar sanción al estudiante "${name}" y reactivar su cuenta?`)) return;
+        
+        if (CONFIG.demoMode) {
+            const student = appState.students.find(s => s.rut === rut);
+            if (student) {
+                student.status = 'Activo';
+                student.debt = '';
+            }
+            saveDemoState();
+            showToast(`Sanción levantada para "${name}".`, "success");
+            renderAdminConfigLists();
+            updateAdminDashboard();
+        } else {
+            showToast("Procesando levantamiento de sanción...", "info");
+            try {
+                const response = await fetch(`${CONFIG.scriptUrl}?action=removeSanction`, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({ rut })
+                });
+                const data = await response.json();
+                if (data.status === "success") {
+                    showToast(data.message || "Sanción levantada con éxito.", "success");
+                    loadData();
+                } else {
+                    showToast(data.message || "Error al levantar sanción.", "danger");
+                }
+            } catch (e) {
+                console.error(e);
+                showToast("Error de conexión.", "danger");
+            }
+        }
+    } else {
+        const reason = prompt(`Ingresa el motivo del bloqueo para "${name}" (Ej: Daño a equipo, Deuda, Retraso grave):`, "Sancionado por el administrador");
+        if (reason === null) return; // cancelado
+        
+        const finalReason = reason.trim() || "Sancionado por el administrador";
+        
+        if (CONFIG.demoMode) {
+            const student = appState.students.find(s => s.rut === rut);
+            if (student) {
+                student.status = 'Bloqueado';
+                student.debt = finalReason;
+            }
+            saveDemoState();
+            showToast(`Estudiante "${name}" bloqueado.`, "info");
+            renderAdminConfigLists();
+            updateAdminDashboard();
+        } else {
+            showToast("Procesando bloqueo...", "info");
+            try {
+                const response = await fetch(`${CONFIG.scriptUrl}?action=applySanction`, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({ rut, reason: finalReason })
+                });
+                const data = await response.json();
+                if (data.status === "success") {
+                    showToast(data.message || "Estudiante bloqueado con éxito.", "success");
+                    loadData();
+                } else {
+                    showToast(data.message || "Error al bloquear estudiante.", "danger");
+                }
+            } catch (e) {
+                console.error(e);
+                showToast("Error de conexión.", "danger");
+            }
         }
     }
 }

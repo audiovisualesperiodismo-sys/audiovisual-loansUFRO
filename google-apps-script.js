@@ -287,6 +287,12 @@ function doPost(e) {
     else if (action === "deleteStudent") {
       responseData = executeDeleteStudent(ss, postData);
     }
+    else if (action === "applySanction") {
+      responseData = executeApplySanction(ss, postData);
+    }
+    else if (action === "removeSanction") {
+      responseData = executeRemoveSanction(ss, postData);
+    }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
     }
@@ -1216,6 +1222,85 @@ function executeDeleteStudent(ss, payload) {
   if (rowIndex === -1) throw new Error("Alumno no encontrado.");
   sheet.deleteRow(rowIndex);
   return { status: "success", message: "Eliminado." };
+}
+
+function executeApplySanction(ss, payload) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) {
+    return { status: "error", message: "Servidor ocupado." };
+  }
+  
+  try {
+    const sheet = ss.getSheetByName("Alumnos");
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0].map(normalizeHeader);
+    const { rutIdx, obsIdx } = getStudentHeaderIndices(headers);
+    
+    if (rutIdx === -1 || obsIdx === -1) {
+      throw new Error("No se encontraron las columnas de RUT u Observaciones en la pestaña Alumnos.");
+    }
+    
+    const cleanSearch = payload.rut.replace(/[^0-9kK]/g, '').toLowerCase();
+    let rowIndex = -1;
+    for (let i = 1; i < values.length; i++) {
+      const stRutVal = values[i][rutIdx];
+      const cleanStudentRut = stRutVal ? stRutVal.toString().replace(/[^0-9kK]/g, '').toLowerCase() : "";
+      if (cleanStudentRut === cleanSearch) {
+        rowIndex = i + 1;
+        break;
+      }
+    }
+    
+    if (rowIndex === -1) throw new Error("Alumno no encontrado.");
+    
+    const reasonText = payload.reason ? payload.reason.trim() : "Sancionado por el administrador";
+    sheet.getRange(rowIndex, obsIdx + 1).setValue(reasonText);
+    SpreadsheetApp.flush();
+    return { status: "success", message: "Alumno bloqueado con éxito." };
+  } catch (error) {
+    return { status: "error", message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function executeRemoveSanction(ss, payload) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) {
+    return { status: "error", message: "Servidor ocupado." };
+  }
+  
+  try {
+    const sheet = ss.getSheetByName("Alumnos");
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0].map(normalizeHeader);
+    const { rutIdx, obsIdx } = getStudentHeaderIndices(headers);
+    
+    if (rutIdx === -1 || obsIdx === -1) {
+      throw new Error("No se encontraron las columnas de RUT u Observaciones en la pestaña Alumnos.");
+    }
+    
+    const cleanSearch = payload.rut.replace(/[^0-9kK]/g, '').toLowerCase();
+    let rowIndex = -1;
+    for (let i = 1; i < values.length; i++) {
+      const stRutVal = values[i][rutIdx];
+      const cleanStudentRut = stRutVal ? stRutVal.toString().replace(/[^0-9kK]/g, '').toLowerCase() : "";
+      if (cleanStudentRut === cleanSearch) {
+        rowIndex = i + 1;
+        break;
+      }
+    }
+    
+    if (rowIndex === -1) throw new Error("Alumno no encontrado.");
+    
+    sheet.getRange(rowIndex, obsIdx + 1).setValue("");
+    SpreadsheetApp.flush();
+    return { status: "success", message: "Bloqueo levantado. Alumno ahora está Activo." };
+  } catch (error) {
+    return { status: "error", message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ==========================================
