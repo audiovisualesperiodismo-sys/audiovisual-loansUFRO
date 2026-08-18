@@ -287,6 +287,9 @@ function doPost(e) {
     else if (action === "deleteStudent") {
       responseData = executeDeleteStudent(ss, postData);
     }
+    else if (action === "removeSanction") {
+      responseData = executeRemoveSanction(ss, postData);
+    }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
     }
@@ -959,8 +962,8 @@ function executeReturnLoan(ss, payload) {
     }
     
     // Calcular y guardar días de atraso en columna histórica si existe
+    let daysOverdue = 0;
     if (daysOverdueIdx !== -1) {
-      let daysOverdue = 0;
       const progDevolucionVal = progDevolucionIdx !== -1 ? loanValues[rowIndex - 1][progDevolucionIdx] : "";
       if (progDevolucionVal) {
         const progDate = parseDateString(progDevolucionVal);
@@ -978,6 +981,44 @@ function executeReturnLoan(ss, payload) {
         }
       }
       loanSheet.getRange(rowIndex, daysOverdueIdx + 1).setValue(daysOverdue);
+    }
+    
+    // Aplicar sanción automática si hay atraso (Fase 45)
+    if (daysOverdue > 0) {
+      const studentRut = loanValues[rowIndex - 1][rutIdx] ? loanValues[rowIndex - 1][rutIdx].toString() : "";
+      if (studentRut) {
+        const studentSheet = ss.getSheetByName("Alumnos");
+        if (studentSheet) {
+          const studentValues = studentSheet.getDataRange().getValues();
+          const studentHeaders = studentValues[0].map(normalizeHeader);
+          const { rutIdx: stRutIdx, obsIdx: stObsIdx } = getStudentHeaderIndices(studentHeaders);
+          
+          if (stRutIdx !== -1 && stObsIdx !== -1) {
+            const cleanSearch = studentRut.replace(/[^0-9kK]/g, '').toLowerCase();
+            let studentRowIndex = -1;
+            for (let i = 1; i < studentValues.length; i++) {
+              const cleanStRut = studentValues[i][stRutIdx].toString().replace(/[^0-9kK]/g, '').toLowerCase();
+              if (cleanStRut === cleanSearch) {
+                studentRowIndex = i + 1;
+                break;
+              }
+            }
+            if (studentRowIndex !== -1) {
+              const sanctionDays = daysOverdue * 7;
+              const sanctionExpiration = new Date();
+              sanctionExpiration.setDate(sanctionExpiration.getDate() + sanctionDays);
+              
+              const dd = String(sanctionExpiration.getDate()).padStart(2, '0');
+              const mm = String(sanctionExpiration.getMonth() + 1).padStart(2, '0');
+              const yyyy = sanctionExpiration.getFullYear();
+              const dateFormatted = dd + "/" + mm + "/" + yyyy;
+              
+              const obsText = "Sancionado hasta " + dateFormatted + " (" + daysOverdue + " sem. por " + daysOverdue + " d. atraso)";
+              studentSheet.getRange(studentRowIndex, stObsIdx + 1).setValue(obsText);
+            }
+          }
+        }
+      }
     }
     SpreadsheetApp.flush();
     
@@ -1216,6 +1257,44 @@ function executeDeleteStudent(ss, payload) {
   if (rowIndex === -1) throw new Error("Alumno no encontrado.");
   sheet.deleteRow(rowIndex);
   return { status: "success", message: "Eliminado." };
+}
+
+function executeRemoveSanction(ss, payload) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) {
+    return { status: "error", message: "Servidor ocupado." };
+  }
+  
+  try {
+    const sheet = ss.getSheetByName("Alumnos");
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0].map(normalizeHeader);
+    const { rutIdx, obsIdx } = getStudentHeaderIndices(headers);
+    
+    if (rutIdx === -1 || obsIdx === -1) {
+      throw new Error("No se encontraron las columnas de RUT u Observaciones en la pestaña Alumnos.");
+    }
+    
+    const cleanSearch = payload.rut.replace(/[^0-9kK]/g, '').toLowerCase();
+    let rowIndex = -1;
+    for (let i = 1; i < values.length; i++) {
+      const cleanStudentRut = values[i][rutIdx].toString().replace(/[^0-9kK]/g, '').toLowerCase();
+      if (cleanStudentRut === cleanSearch) {
+        rowIndex = i + 1;
+        break;
+      }
+    }
+    
+    if (rowIndex === -1) throw new Error("Alumno no encontrado.");
+    
+    sheet.getRange(rowIndex, obsIdx + 1).setValue("");
+    SpreadsheetApp.flush();
+    return { status: "success", message: "Sanción levantada con éxito. El alumno ahora está Activo." };
+  } catch (error) {
+    return { status: "error", message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ==========================================

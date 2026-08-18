@@ -2432,15 +2432,29 @@ function renderAdminStudentsList() {
                 <p>RUT: ${student.rut} | Fono: ${student.fono || '-'}</p>
                 <small style="${badgeColor}">Estado: ${displayStatus} ${isBlocked ? `(${student.debt})` : ''}</small>
             </div>
-            <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}">
-                <i data-lucide="trash-2"></i>
-            </button>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                ${isBlocked ? `
+                <button class="btn-unlock-student" data-rut="${student.rut}" data-name="${student.name}" title="Quitar Sanción">
+                    <i data-lucide="unlock"></i>
+                </button>
+                ` : ''}
+                <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}" title="Eliminar Alumno">
+                    <i data-lucide="trash-2"></i>
+                </button>
+            </div>
         `;
         li.querySelector('.btn-delete-item').addEventListener('click', (e) => {
             const rut = e.currentTarget.getAttribute('data-rut');
             const name = e.currentTarget.getAttribute('data-name');
             deleteStudentConfig(rut, name);
         });
+        if (isBlocked) {
+            li.querySelector('.btn-unlock-student').addEventListener('click', (e) => {
+                const rut = e.currentTarget.getAttribute('data-rut');
+                const name = e.currentTarget.getAttribute('data-name');
+                removeStudentSanction(rut, name);
+            });
+        }
         dom.adminStudentsList.appendChild(li);
     });
     lucide.createIcons();
@@ -2618,6 +2632,42 @@ async function deleteStudentConfig(rut, name) {
         }
     }
 }
+
+async function removeStudentSanction(rut, name) {
+    if (!confirm(`¿Levantar la sanción al estudiante "${name}"? Su estado volverá a ser Activo.`)) return;
+    if (CONFIG.demoMode) {
+        const student = appState.students.find(s => s.rut === rut);
+        if (student) {
+            student.status = "Activo";
+            student.debt = "";
+            saveDemoState();
+            showToast(`Sanción de "${name}" removida.`, "success");
+            renderAdminConfigLists();
+            updateAdminDashboard();
+        }
+    } else {
+        showToast("Levantando sanción...", "info");
+        try {
+            const response = await fetch(`${CONFIG.scriptUrl}?action=removeSanction`, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({ rut })
+            });
+            const data = await response.json();
+            if (data.status === "success") {
+                showToast("Sanción levantada con éxito.", "success");
+                await loadData();
+            } else {
+                showToast(data.message || "Error al levantar sanción.", "danger");
+            }
+        } catch (e) {
+            console.error(e);
+            showToast("Error de conexión.", "danger");
+        }
+    }
+}
+
 
 // ==========================================
 // INTEGRACIÓN DE CÁMARA (WEBCAM SCANNER)
