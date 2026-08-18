@@ -287,9 +287,6 @@ function doPost(e) {
     else if (action === "deleteStudent") {
       responseData = executeDeleteStudent(ss, postData);
     }
-    else if (action === "removeSanction") {
-      responseData = executeRemoveSanction(ss, postData);
-    }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
     }
@@ -356,50 +353,19 @@ function getLoanHeaderIndices(headers) {
   // Fecha Registro / Solicitud original (reserva)
   const dateOutIdx = headers.findIndex(h => h.includes("registro") || h.includes("solicitud"));
   
-  // Detectar si la planilla tiene una columna dedicada a la devolución física real ("Fecha Entrega" o similar)
-  const hasEntregaCol = headers.some(function(h) {
-    const norm = h.toString().toLowerCase();
-    return norm === "fecha entrega" || norm === "entrega" || norm.includes("entrega fisica") || (norm.includes("entrega") && !norm.includes("retiro") && !norm.includes("programad"));
-  });
-  
-  // 1. Fecha de Retiro Real (cuando se retira físicamente)
-  const dateDeliverIdx = headers.findIndex(function(h) {
+  // Fecha Retiro / Entrega Real (cuando se retira físicamente)
+  const dateDeliverIdx = headers.findIndex(h => {
     const norm = h.toString().toLowerCase();
     if (norm.includes("registro") || norm.includes("solicitud")) return false;
-    return norm.includes("retiro") && !norm.includes("programad") && !norm.includes("previst") && !norm.includes("estimad");
+    if (norm.includes("devolucion") || norm.includes("retorno") || norm.includes("entrada")) return false;
+    return (norm.includes("retiro") && !norm.includes("programad") && !norm.includes("previst") && !norm.includes("estimad")) ||
+           (norm.includes("entrega") && !norm.includes("programad") && !norm.includes("previst") && !norm.includes("estimad"));
   });
   
-  // 2. Fecha de Devolución Real (cuando se entrega de vuelta el equipo, mapeado a "Fecha Entrega" si existe)
-  let dateInIdx = -1;
-  if (hasEntregaCol) {
-    dateInIdx = headers.findIndex(function(h) {
-      const norm = h.toString().toLowerCase();
-      return norm.includes("entrega") && !norm.includes("retiro") && !norm.includes("programad") && !norm.includes("previst");
-    });
-  } else {
-    dateInIdx = headers.findIndex(function(h) {
-      const norm = h.toString().toLowerCase();
-      return norm.includes("devolucion") || norm.includes("retorno") || norm.includes("entrada") || norm.includes("fecha de devolucion");
-    });
-  }
-  
+  const dateInIdx = headers.findIndex(h => h.includes("devolucion") || h.includes("retorno") || h.includes("entrada") || h.includes("fecha de devolucion"));
   const statusIdx = headers.findIndex(h => h.includes("estado") || h.includes("status"));
   const progRetiroIdx = headers.findIndex(h => (h.includes("programad") || h.includes("previst") || h.includes("estimad") || h.includes("planificad")) && (h.includes("retiro") || h.includes("salida")));
-  
-  // 3. Fecha de Devolución Pactada (límite programado, mapeado a "Fecha Devolución" si existe la columna "Fecha Entrega")
-  let progDevolucionIdx = -1;
-  if (hasEntregaCol) {
-    progDevolucionIdx = headers.findIndex(function(h) {
-      const norm = h.toString().toLowerCase();
-      return (norm.includes("devolucion") && !norm.includes("observacion") && !norm.includes("obs")) || norm.includes("pactad") || norm.includes("programad");
-    });
-  } else {
-    progDevolucionIdx = headers.findIndex(function(h) {
-      const norm = h.toString().toLowerCase();
-      return norm.includes("programad") || norm.includes("pactad") || norm.includes("limite") || norm.includes("compromiso") ||
-             ((norm.includes("devolucion") || norm.includes("retorno")) && (norm.includes("estimad") || norm.includes("previst") || norm.includes("planificad")));
-    });
-  }
+  const progDevolucionIdx = headers.findIndex(h => (h.includes("programad") || h.includes("previst") || h.includes("estimad") || h.includes("planificad")) && (h.includes("devolucion") || h.includes("retorno")));
   const subjectIdx = headers.findIndex(h => h.includes("asignatura") || h.includes("catedra") || h.includes("clase") || h.includes("materia") || h.includes("curso"));
   const obsReturnIdx = headers.findIndex(h => {
     const norm = h.toString().toLowerCase();
@@ -993,20 +959,19 @@ function executeReturnLoan(ss, payload) {
     }
     
     // Calcular y guardar días de atraso en columna histórica si existe
-    let daysOverdue = 0;
     if (daysOverdueIdx !== -1) {
+      let daysOverdue = 0;
       const progDevolucionVal = progDevolucionIdx !== -1 ? loanValues[rowIndex - 1][progDevolucionIdx] : "";
       if (progDevolucionVal) {
         const progDate = parseDateString(progDevolucionVal);
         const realDate = parseDateString(timestamp);
         
         if (progDate && realDate) {
-          // Construir fechas limpias en la misma zona horaria local de ejecución a las 12:00
-          const pDate = new Date(progDate.getFullYear(), progDate.getMonth(), progDate.getDate(), 12, 0, 0);
-          const rDate = new Date(realDate.getFullYear(), realDate.getMonth(), realDate.getDate(), 12, 0, 0);
+          progDate.setHours(0,0,0,0);
+          realDate.setHours(0,0,0,0);
           
-          const diffTime = rDate.getTime() - pDate.getTime();
-          const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+          const diffTime = realDate.getTime() - progDate.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
           if (diffDays > 0) {
             daysOverdue = diffDays;
           }
@@ -1014,54 +979,10 @@ function executeReturnLoan(ss, payload) {
       }
       loanSheet.getRange(rowIndex, daysOverdueIdx + 1).setValue(daysOverdue);
     }
-    
-    // Aplicar sanción automática si hay atraso (Fase 45)
-    if (daysOverdue > 0) {
-      const studentRut = loanValues[rowIndex - 1][rutIdx] ? loanValues[rowIndex - 1][rutIdx].toString() : "";
-      if (studentRut) {
-        const studentSheet = ss.getSheetByName("Alumnos");
-        if (studentSheet) {
-          const studentValues = studentSheet.getDataRange().getValues();
-          const studentHeaders = studentValues[0].map(normalizeHeader);
-          const { rutIdx: stRutIdx, obsIdx: stObsIdx } = getStudentHeaderIndices(studentHeaders);
-          
-          if (stRutIdx !== -1 && stObsIdx !== -1) {
-            const cleanSearch = studentRut.replace(/[^0-9kK]/g, '').toLowerCase();
-            let studentRowIndex = -1;
-            for (let i = 1; i < studentValues.length; i++) {
-              const stRutVal = studentValues[i][stRutIdx];
-              const cleanStRut = stRutVal ? stRutVal.toString().replace(/[^0-9kK]/g, '').toLowerCase() : "";
-              if (cleanStRut === cleanSearch) {
-                studentRowIndex = i + 1;
-                break;
-              }
-            }
-            if (studentRowIndex !== -1) {
-              const sanctionDays = daysOverdue * 7;
-              const sanctionExpiration = new Date();
-              sanctionExpiration.setDate(sanctionExpiration.getDate() + sanctionDays);
-              
-              const dd = String(sanctionExpiration.getDate()).padStart(2, '0');
-              const mm = String(sanctionExpiration.getMonth() + 1).padStart(2, '0');
-              const yyyy = sanctionExpiration.getFullYear();
-              const dateFormatted = dd + "/" + mm + "/" + yyyy;
-              
-              const obsText = "Sancionado hasta " + dateFormatted + " (" + daysOverdue + " sem. por " + daysOverdue + " d. atraso)";
-              studentSheet.getRange(studentRowIndex, stObsIdx + 1).setValue(obsText);
-            }
-          }
-        }
-      }
-    }
     SpreadsheetApp.flush();
     
     const returnedInfo = returnedItems.map(function(x) { return x.name + " (" + x.code + ")"; }).join(" | ");
-    let msg = "Devolución procesada. Equipos: " + returnedInfo;
-    if (daysOverdue > 0) {
-      msg += " (Atraso: " + daysOverdue + " día(s) - Alumno Sancionado)";
-    } else {
-      msg += " (Sin atraso detectado)";
-    }
+    const msg = "Devolución procesada. Equipos: " + returnedInfo;
     
     try {
       sendDevolucionEmail(studentName, studentEmail, returnedItems, timestamp, loanId);
@@ -1295,44 +1216,6 @@ function executeDeleteStudent(ss, payload) {
   if (rowIndex === -1) throw new Error("Alumno no encontrado.");
   sheet.deleteRow(rowIndex);
   return { status: "success", message: "Eliminado." };
-}
-
-function executeRemoveSanction(ss, payload) {
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(10000); } catch (e) {
-    return { status: "error", message: "Servidor ocupado." };
-  }
-  
-  try {
-    const sheet = ss.getSheetByName("Alumnos");
-    const values = sheet.getDataRange().getValues();
-    const headers = values[0].map(normalizeHeader);
-    const { rutIdx, obsIdx } = getStudentHeaderIndices(headers);
-    
-    if (rutIdx === -1 || obsIdx === -1) {
-      throw new Error("No se encontraron las columnas de RUT u Observaciones en la pestaña Alumnos.");
-    }
-    
-    const cleanSearch = payload.rut.replace(/[^0-9kK]/g, '').toLowerCase();
-    let rowIndex = -1;
-    for (let i = 1; i < values.length; i++) {
-      const cleanStudentRut = values[i][rutIdx].toString().replace(/[^0-9kK]/g, '').toLowerCase();
-      if (cleanStudentRut === cleanSearch) {
-        rowIndex = i + 1;
-        break;
-      }
-    }
-    
-    if (rowIndex === -1) throw new Error("Alumno no encontrado.");
-    
-    sheet.getRange(rowIndex, obsIdx + 1).setValue("");
-    SpreadsheetApp.flush();
-    return { status: "success", message: "Sanción levantada con éxito. El alumno ahora está Activo." };
-  } catch (error) {
-    return { status: "error", message: error.toString() };
-  } finally {
-    lock.releaseLock();
-  }
 }
 
 // ==========================================

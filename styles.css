@@ -1490,24 +1490,6 @@ input:checked + .slider:before {
     transform: scale(1.1);
 }
 
-.btn-unlock-student {
-    background: none;
-    border: none;
-    outline: none;
-    color: var(--success);
-    cursor: pointer;
-    transition: var(--transition-fast);
-    padding: 6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.btn-unlock-student:hover {
-    color: #059669;
-    transform: scale(1.1);
-}
-
 .settings-card {
     padding: 24px;
 }

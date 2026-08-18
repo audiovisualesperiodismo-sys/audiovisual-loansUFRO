@@ -117,10 +117,6 @@ const dom = {
     btnConfirmReturn: document.getElementById('btn-confirm-return'),
     returnItemsContainer: document.getElementById('return-items-container'),
     returnGlobalObs: document.getElementById('return-global-obs'),
-    returnApplySanction: document.getElementById('return-apply-sanction'),
-    returnSanctionContainer: document.getElementById('return-sanction-container'),
-    returnSanctionWeeks: document.getElementById('return-sanction-weeks'),
-    returnSanctionHelper: document.getElementById('return-sanction-helper'),
     
     // Métricas
     metricTotalEquipos: document.getElementById('metric-total-equipos'),
@@ -584,26 +580,6 @@ function initEventListeners() {
     dom.btnCloseReturn.addEventListener('click', () => {
         dom.returnModal.classList.add('hidden');
     });
-    
-    if (dom.returnApplySanction) {
-        dom.returnApplySanction.addEventListener('change', () => {
-            if (dom.returnApplySanction.checked) {
-                dom.returnSanctionContainer.classList.remove('hidden');
-            } else {
-                dom.returnSanctionContainer.classList.add('hidden');
-            }
-        });
-    }
-    
-    if (dom.returnSanctionWeeks) {
-        dom.returnSanctionWeeks.addEventListener('input', () => {
-            const weeks = parseInt(dom.returnSanctionWeeks.value) || 1;
-            const days = weeks * 7;
-            if (dom.returnSanctionHelper) {
-                dom.returnSanctionHelper.textContent = `(${days} días de bloqueo)`;
-            }
-        });
-    }
     
     dom.adminLoginForm.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -1646,25 +1622,6 @@ function openReturnModal(loanId) {
         dom.returnGlobalObs.value = '';
     }
     
-    const daysOverdue = getDaysOverdue(loanItems[0]);
-    if (dom.returnApplySanction) {
-        dom.returnApplySanction.checked = daysOverdue > 0;
-    }
-    if (dom.returnSanctionContainer) {
-        if (daysOverdue > 0) {
-            dom.returnSanctionContainer.classList.remove('hidden');
-        } else {
-            dom.returnSanctionContainer.classList.add('hidden');
-        }
-    }
-    if (dom.returnSanctionWeeks) {
-        dom.returnSanctionWeeks.value = daysOverdue > 0 ? daysOverdue.toString() : '1';
-    }
-    if (dom.returnSanctionHelper) {
-        const suggestedDays = (daysOverdue > 0 ? daysOverdue : 1) * 7;
-        dom.returnSanctionHelper.textContent = `(${suggestedDays} días de bloqueo)`;
-    }
-    
     if (dom.returnModal) {
         dom.returnModal.classList.remove('hidden');
         lucide.createIcons();
@@ -1676,8 +1633,6 @@ async function confirmReturnCheckout() {
     if (!loanId) return;
     
     const obsReturnVal = dom.returnGlobalObs ? dom.returnGlobalObs.value.trim() : '';
-    const applySanction = dom.returnApplySanction ? dom.returnApplySanction.checked : false;
-    const sanctionWeeks = dom.returnSanctionWeeks ? parseInt(dom.returnSanctionWeeks.value) || 1 : 1;
     
     if (dom.returnModal) {
         dom.returnModal.classList.add('hidden');
@@ -1687,21 +1642,6 @@ async function confirmReturnCheckout() {
         const dateStr = getNowFormatted();
         const loanItems = appState.loans.filter(l => l.id === loanId && l.status === "Retirado");
         if (loanItems.length === 0) return;
-        
-        // Simulación Sanción Manual en Modo Demo
-        if (applySanction) {
-            const studentNameStr = loanItems[0].name;
-            const student = appState.students.find(s => (s.name + " " + (s.lastname || "")).trim() === studentNameStr.trim());
-            if (student) {
-                const sanctionExpiration = new Date();
-                sanctionExpiration.setDate(sanctionExpiration.getDate() + (sanctionWeeks * 7));
-                const dd = String(sanctionExpiration.getDate()).padStart(2, '0');
-                const mm = String(sanctionExpiration.getMonth() + 1).padStart(2, '0');
-                const yyyy = sanctionExpiration.getFullYear();
-                student.status = "Bloqueado";
-                student.debt = `Sancionado hasta ${dd}/${mm}/${yyyy} (${sanctionWeeks} sem. manual)`;
-            }
-        }
         
         const returnedItems = [];
         loanItems.forEach(loan => {
@@ -1733,19 +1673,17 @@ async function confirmReturnCheckout() {
         await loadData();
         renderAdminLoans(appState.activeAdminLoanFilter);
     } else {
-        executeReturnApi(loanId, obsReturnVal, applySanction, sanctionWeeks);
+        executeReturnApi(loanId, obsReturnVal);
     }
 }
 
-async function executeReturnApi(loanId, obsReturn, applySanction, sanctionWeeks) {
+async function executeReturnApi(loanId, obsReturn) {
     showToast("Procesando devolución en AVP Sheets...", "info");
     try {
         const payload = {
             loanId: loanId,
             timestamp: getNowFormatted(),
-            obsReturn: obsReturn,
-            applySanction: applySanction,
-            sanctionWeeks: sanctionWeeks
+            obsReturn: obsReturn
         };
         
         const response = await fetch(`${CONFIG.scriptUrl}?action=returnLoan`, {
@@ -2494,29 +2432,15 @@ function renderAdminStudentsList() {
                 <p>RUT: ${student.rut} | Fono: ${student.fono || '-'}</p>
                 <small style="${badgeColor}">Estado: ${displayStatus} ${isBlocked ? `(${student.debt})` : ''}</small>
             </div>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                ${isBlocked ? `
-                <button class="btn-unlock-student" data-rut="${student.rut}" data-name="${student.name}" title="Quitar Sanción">
-                    <i data-lucide="unlock"></i>
-                </button>
-                ` : ''}
-                <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}" title="Eliminar Alumno">
-                    <i data-lucide="trash-2"></i>
-                </button>
-            </div>
+            <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}">
+                <i data-lucide="trash-2"></i>
+            </button>
         `;
         li.querySelector('.btn-delete-item').addEventListener('click', (e) => {
             const rut = e.currentTarget.getAttribute('data-rut');
             const name = e.currentTarget.getAttribute('data-name');
             deleteStudentConfig(rut, name);
         });
-        if (isBlocked) {
-            li.querySelector('.btn-unlock-student').addEventListener('click', (e) => {
-                const rut = e.currentTarget.getAttribute('data-rut');
-                const name = e.currentTarget.getAttribute('data-name');
-                removeStudentSanction(rut, name);
-            });
-        }
         dom.adminStudentsList.appendChild(li);
     });
     lucide.createIcons();
@@ -2694,42 +2618,6 @@ async function deleteStudentConfig(rut, name) {
         }
     }
 }
-
-async function removeStudentSanction(rut, name) {
-    if (!confirm(`¿Levantar la sanción al estudiante "${name}"? Su estado volverá a ser Activo.`)) return;
-    if (CONFIG.demoMode) {
-        const student = appState.students.find(s => s.rut === rut);
-        if (student) {
-            student.status = "Activo";
-            student.debt = "";
-            saveDemoState();
-            showToast(`Sanción de "${name}" removida.`, "success");
-            renderAdminConfigLists();
-            updateAdminDashboard();
-        }
-    } else {
-        showToast("Levantando sanción...", "info");
-        try {
-            const response = await fetch(`${CONFIG.scriptUrl}?action=removeSanction`, {
-                method: 'POST',
-                mode: 'cors',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({ rut })
-            });
-            const data = await response.json();
-            if (data.status === "success") {
-                showToast("Sanción levantada con éxito.", "success");
-                await loadData();
-            } else {
-                showToast(data.message || "Error al levantar sanción.", "danger");
-            }
-        } catch (e) {
-            console.error(e);
-            showToast("Error de conexión.", "danger");
-        }
-    }
-}
-
 
 // ==========================================
 // INTEGRACIÓN DE CÁMARA (WEBCAM SCANNER)
