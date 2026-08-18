@@ -117,6 +117,10 @@ const dom = {
     btnConfirmReturn: document.getElementById('btn-confirm-return'),
     returnItemsContainer: document.getElementById('return-items-container'),
     returnGlobalObs: document.getElementById('return-global-obs'),
+    returnApplySanction: document.getElementById('return-apply-sanction'),
+    returnSanctionContainer: document.getElementById('return-sanction-container'),
+    returnSanctionWeeks: document.getElementById('return-sanction-weeks'),
+    returnSanctionHelper: document.getElementById('return-sanction-helper'),
     
     // Métricas
     metricTotalEquipos: document.getElementById('metric-total-equipos'),
@@ -580,6 +584,26 @@ function initEventListeners() {
     dom.btnCloseReturn.addEventListener('click', () => {
         dom.returnModal.classList.add('hidden');
     });
+    
+    if (dom.returnApplySanction) {
+        dom.returnApplySanction.addEventListener('change', () => {
+            if (dom.returnApplySanction.checked) {
+                dom.returnSanctionContainer.classList.remove('hidden');
+            } else {
+                dom.returnSanctionContainer.classList.add('hidden');
+            }
+        });
+    }
+    
+    if (dom.returnSanctionWeeks) {
+        dom.returnSanctionWeeks.addEventListener('input', () => {
+            const weeks = parseInt(dom.returnSanctionWeeks.value) || 1;
+            const days = weeks * 7;
+            if (dom.returnSanctionHelper) {
+                dom.returnSanctionHelper.textContent = `(${days} días de bloqueo)`;
+            }
+        });
+    }
     
     dom.adminLoginForm.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -1622,6 +1646,25 @@ function openReturnModal(loanId) {
         dom.returnGlobalObs.value = '';
     }
     
+    const daysOverdue = getDaysOverdue(loanItems[0]);
+    if (dom.returnApplySanction) {
+        dom.returnApplySanction.checked = daysOverdue > 0;
+    }
+    if (dom.returnSanctionContainer) {
+        if (daysOverdue > 0) {
+            dom.returnSanctionContainer.classList.remove('hidden');
+        } else {
+            dom.returnSanctionContainer.classList.add('hidden');
+        }
+    }
+    if (dom.returnSanctionWeeks) {
+        dom.returnSanctionWeeks.value = daysOverdue > 0 ? daysOverdue.toString() : '1';
+    }
+    if (dom.returnSanctionHelper) {
+        const suggestedDays = (daysOverdue > 0 ? daysOverdue : 1) * 7;
+        dom.returnSanctionHelper.textContent = `(${suggestedDays} días de bloqueo)`;
+    }
+    
     if (dom.returnModal) {
         dom.returnModal.classList.remove('hidden');
         lucide.createIcons();
@@ -1633,6 +1676,8 @@ async function confirmReturnCheckout() {
     if (!loanId) return;
     
     const obsReturnVal = dom.returnGlobalObs ? dom.returnGlobalObs.value.trim() : '';
+    const applySanction = dom.returnApplySanction ? dom.returnApplySanction.checked : false;
+    const sanctionWeeks = dom.returnSanctionWeeks ? parseInt(dom.returnSanctionWeeks.value) || 1 : 1;
     
     if (dom.returnModal) {
         dom.returnModal.classList.add('hidden');
@@ -1642,6 +1687,21 @@ async function confirmReturnCheckout() {
         const dateStr = getNowFormatted();
         const loanItems = appState.loans.filter(l => l.id === loanId && l.status === "Retirado");
         if (loanItems.length === 0) return;
+        
+        // Simulación Sanción Manual en Modo Demo
+        if (applySanction) {
+            const studentNameStr = loanItems[0].name;
+            const student = appState.students.find(s => (s.name + " " + (s.lastname || "")).trim() === studentNameStr.trim());
+            if (student) {
+                const sanctionExpiration = new Date();
+                sanctionExpiration.setDate(sanctionExpiration.getDate() + (sanctionWeeks * 7));
+                const dd = String(sanctionExpiration.getDate()).padStart(2, '0');
+                const mm = String(sanctionExpiration.getMonth() + 1).padStart(2, '0');
+                const yyyy = sanctionExpiration.getFullYear();
+                student.status = "Bloqueado";
+                student.debt = `Sancionado hasta ${dd}/${mm}/${yyyy} (${sanctionWeeks} sem. manual)`;
+            }
+        }
         
         const returnedItems = [];
         loanItems.forEach(loan => {
@@ -1673,17 +1733,19 @@ async function confirmReturnCheckout() {
         await loadData();
         renderAdminLoans(appState.activeAdminLoanFilter);
     } else {
-        executeReturnApi(loanId, obsReturnVal);
+        executeReturnApi(loanId, obsReturnVal, applySanction, sanctionWeeks);
     }
 }
 
-async function executeReturnApi(loanId, obsReturn) {
+async function executeReturnApi(loanId, obsReturn, applySanction, sanctionWeeks) {
     showToast("Procesando devolución en AVP Sheets...", "info");
     try {
         const payload = {
             loanId: loanId,
             timestamp: getNowFormatted(),
-            obsReturn: obsReturn
+            obsReturn: obsReturn,
+            applySanction: applySanction,
+            sanctionWeeks: sanctionWeeks
         };
         
         const response = await fetch(`${CONFIG.scriptUrl}?action=returnLoan`, {
