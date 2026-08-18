@@ -368,7 +368,11 @@ function getLoanHeaderIndices(headers) {
   const dateInIdx = headers.findIndex(h => h.includes("devolucion") || h.includes("retorno") || h.includes("entrada") || h.includes("fecha de devolucion"));
   const statusIdx = headers.findIndex(h => h.includes("estado") || h.includes("status"));
   const progRetiroIdx = headers.findIndex(h => (h.includes("programad") || h.includes("previst") || h.includes("estimad") || h.includes("planificad")) && (h.includes("retiro") || h.includes("salida")));
-  const progDevolucionIdx = headers.findIndex(h => (h.includes("programad") || h.includes("previst") || h.includes("estimad") || h.includes("planificad")) && (h.includes("devolucion") || h.includes("retorno")));
+  const progDevolucionIdx = headers.findIndex(h => {
+    const norm = h.toString().toLowerCase();
+    return norm.includes("programad") || norm.includes("pactad") || norm.includes("limite") || norm.includes("compromiso") ||
+           ((norm.includes("devolucion") || norm.includes("retorno")) && (norm.includes("estimad") || norm.includes("previst") || norm.includes("planificad")));
+  });
   const subjectIdx = headers.findIndex(h => h.includes("asignatura") || h.includes("catedra") || h.includes("clase") || h.includes("materia") || h.includes("curso"));
   const obsReturnIdx = headers.findIndex(h => {
     const norm = h.toString().toLowerCase();
@@ -970,11 +974,12 @@ function executeReturnLoan(ss, payload) {
         const realDate = parseDateString(timestamp);
         
         if (progDate && realDate) {
-          progDate.setHours(0,0,0,0);
-          realDate.setHours(0,0,0,0);
+          // Construir fechas limpias en la misma zona horaria local de ejecución a las 12:00
+          const pDate = new Date(progDate.getFullYear(), progDate.getMonth(), progDate.getDate(), 12, 0, 0);
+          const rDate = new Date(realDate.getFullYear(), realDate.getMonth(), realDate.getDate(), 12, 0, 0);
           
-          const diffTime = realDate.getTime() - progDate.getTime();
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          const diffTime = rDate.getTime() - pDate.getTime();
+          const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
           if (diffDays > 0) {
             daysOverdue = diffDays;
           }
@@ -997,7 +1002,8 @@ function executeReturnLoan(ss, payload) {
             const cleanSearch = studentRut.replace(/[^0-9kK]/g, '').toLowerCase();
             let studentRowIndex = -1;
             for (let i = 1; i < studentValues.length; i++) {
-              const cleanStRut = studentValues[i][stRutIdx].toString().replace(/[^0-9kK]/g, '').toLowerCase();
+              const stRutVal = studentValues[i][stRutIdx];
+              const cleanStRut = stRutVal ? stRutVal.toString().replace(/[^0-9kK]/g, '').toLowerCase() : "";
               if (cleanStRut === cleanSearch) {
                 studentRowIndex = i + 1;
                 break;
@@ -1023,7 +1029,12 @@ function executeReturnLoan(ss, payload) {
     SpreadsheetApp.flush();
     
     const returnedInfo = returnedItems.map(function(x) { return x.name + " (" + x.code + ")"; }).join(" | ");
-    const msg = "Devolución procesada. Equipos: " + returnedInfo;
+    let msg = "Devolución procesada. Equipos: " + returnedInfo;
+    if (daysOverdue > 0) {
+      msg += " (Atraso: " + daysOverdue + " día(s) - Alumno Sancionado)";
+    } else {
+      msg += " (Sin atraso detectado)";
+    }
     
     try {
       sendDevolucionEmail(studentName, studentEmail, returnedItems, timestamp, loanId);
