@@ -356,23 +356,50 @@ function getLoanHeaderIndices(headers) {
   // Fecha Registro / Solicitud original (reserva)
   const dateOutIdx = headers.findIndex(h => h.includes("registro") || h.includes("solicitud"));
   
-  // Fecha Retiro / Entrega Real (cuando se retira físicamente)
-  const dateDeliverIdx = headers.findIndex(h => {
+  // Detectar si la planilla tiene una columna dedicada a la devolución física real ("Fecha Entrega" o similar)
+  const hasEntregaCol = headers.some(function(h) {
     const norm = h.toString().toLowerCase();
-    if (norm.includes("registro") || norm.includes("solicitud")) return false;
-    if (norm.includes("devolucion") || norm.includes("retorno") || norm.includes("entrada")) return false;
-    return (norm.includes("retiro") && !norm.includes("programad") && !norm.includes("previst") && !norm.includes("estimad")) ||
-           (norm.includes("entrega") && !norm.includes("programad") && !norm.includes("previst") && !norm.includes("estimad"));
+    return norm === "fecha entrega" || norm === "entrega" || norm.includes("entrega fisica") || (norm.includes("entrega") && !norm.includes("retiro") && !norm.includes("programad"));
   });
   
-  const dateInIdx = headers.findIndex(h => h.includes("devolucion") || h.includes("retorno") || h.includes("entrada") || h.includes("fecha de devolucion"));
+  // 1. Fecha de Retiro Real (cuando se retira físicamente)
+  const dateDeliverIdx = headers.findIndex(function(h) {
+    const norm = h.toString().toLowerCase();
+    if (norm.includes("registro") || norm.includes("solicitud")) return false;
+    return norm.includes("retiro") && !norm.includes("programad") && !norm.includes("previst") && !norm.includes("estimad");
+  });
+  
+  // 2. Fecha de Devolución Real (cuando se entrega de vuelta el equipo, mapeado a "Fecha Entrega" si existe)
+  let dateInIdx = -1;
+  if (hasEntregaCol) {
+    dateInIdx = headers.findIndex(function(h) {
+      const norm = h.toString().toLowerCase();
+      return norm.includes("entrega") && !norm.includes("retiro") && !norm.includes("programad") && !norm.includes("previst");
+    });
+  } else {
+    dateInIdx = headers.findIndex(function(h) {
+      const norm = h.toString().toLowerCase();
+      return norm.includes("devolucion") || norm.includes("retorno") || norm.includes("entrada") || norm.includes("fecha de devolucion");
+    });
+  }
+  
   const statusIdx = headers.findIndex(h => h.includes("estado") || h.includes("status"));
   const progRetiroIdx = headers.findIndex(h => (h.includes("programad") || h.includes("previst") || h.includes("estimad") || h.includes("planificad")) && (h.includes("retiro") || h.includes("salida")));
-  const progDevolucionIdx = headers.findIndex(h => {
-    const norm = h.toString().toLowerCase();
-    return norm.includes("programad") || norm.includes("pactad") || norm.includes("limite") || norm.includes("compromiso") ||
-           ((norm.includes("devolucion") || norm.includes("retorno")) && (norm.includes("estimad") || norm.includes("previst") || norm.includes("planificad")));
-  });
+  
+  // 3. Fecha de Devolución Pactada (límite programado, mapeado a "Fecha Devolución" si existe la columna "Fecha Entrega")
+  let progDevolucionIdx = -1;
+  if (hasEntregaCol) {
+    progDevolucionIdx = headers.findIndex(function(h) {
+      const norm = h.toString().toLowerCase();
+      return (norm.includes("devolucion") && !norm.includes("observacion") && !norm.includes("obs")) || norm.includes("pactad") || norm.includes("programad");
+    });
+  } else {
+    progDevolucionIdx = headers.findIndex(function(h) {
+      const norm = h.toString().toLowerCase();
+      return norm.includes("programad") || norm.includes("pactad") || norm.includes("limite") || norm.includes("compromiso") ||
+             ((norm.includes("devolucion") || norm.includes("retorno")) && (norm.includes("estimad") || norm.includes("previst") || norm.includes("planificad")));
+    });
+  }
   const subjectIdx = headers.findIndex(h => h.includes("asignatura") || h.includes("catedra") || h.includes("clase") || h.includes("materia") || h.includes("curso"));
   const obsReturnIdx = headers.findIndex(h => {
     const norm = h.toString().toLowerCase();
