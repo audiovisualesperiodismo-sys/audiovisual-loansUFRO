@@ -783,7 +783,33 @@ function executeDeliverLoan(ss, payload) {
       }
     });
     
-    // Second, process extra items added on the fly
+    // Second, process requested items that were NOT delivered (cancelled/excluded in modal)
+    const newlyCancelledItems = [];
+    for (let k = 0; k < expectedCount; k++) {
+      if (!matchedIndices.has(k) && (currentStatuses[k] === "Solicitado" || currentStatuses[k] === "")) {
+        const itemNameToCancel = currentItems[k];
+        currentStatuses[k] = "Anulado";
+        currentCodes[k] = "Anulado";
+        matchedIndices.add(k);
+        updatedRowsCount++;
+        newlyCancelledItems.push(itemNameToCancel);
+        
+        // Devolver stock al Inventario (incrementar disponible +1)
+        for (let j = 1; j < invValues.length; j++) {
+          if (invValues[j][invNameIdx].toString().toUpperCase().trim() === itemNameToCancel.toUpperCase().trim()) {
+            const totalVal = parseInt(invValues[j][invTotalIdx]) || 0;
+            const rawDisp = invValues[j][invDispIdx];
+            const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+            const newDisp = Math.min(totalVal, currentDisp + 1);
+            invSheet.getRange(j + 1, invDispIdx + 1).setValue(newDisp);
+            invValues[j - 1][invDispIdx] = newDisp; // Sync memory array
+            break;
+          }
+        }
+      }
+    }
+    
+    // Third, process extra items added on the fly
     for (let k = 0; k < extraItems.length; k++) {
       const extraItem = extraItems[k];
       
@@ -839,14 +865,30 @@ function executeDeliverLoan(ss, payload) {
     }
     SpreadsheetApp.flush();
     
-    const extrasInfo = extraItems.length > 0 ? extraItems.map(function(x) { return x.name; }).join(", ") : "Ninguno";
-    const msg = "Retiro registrado. Equipos: " + currentItems.join(" | ") + " (Extras: " + extrasInfo + ")";
+    const extrasInfo = extraItems.length > 0 ? extraItems.map(function(x) { return x.name; }).join(", ") : "";
+    const cancInfo = newlyCancelledItems.length > 0 ? newlyCancelledItems.join(", ") : "";
+    let msg = "Retiro físico confirmado.";
+    if (items.length > 0) {
+      msg += " Entregados: " + items.map(function(x) { return x.name; }).join(", ");
+    }
+    if (cancInfo) {
+      msg += " (Anulados y reincorporados al stock: " + cancInfo + ")";
+    }
     
-    try {
-      sendRetiroFisicoEmail(studentName, studentEmail, items, timestamp, loanId);
-    } catch (emailError) {
-      Logger.log("ERROR al enviar email de retiro: " + emailError.toString());
-      return { status: "success", message: msg + ". (Nota: No se pudo enviar el correo de comprobación)." };
+    if (items.length > 0) {
+      try {
+        sendRetiroFisicoEmail(studentName, studentEmail, items, timestamp, loanId);
+      } catch (emailError) {
+        Logger.log("ERROR al enviar email de retiro: " + emailError.toString());
+        return { status: "success", message: msg + ". (Nota: No se pudo enviar el correo de comprobación)." };
+      }
+    } else if (newlyCancelledItems.length > 0) {
+      try {
+        sendAnulacionEmail(studentName, studentEmail, newlyCancelledItems.map(function(x) { return { name: x, code: "Anulado" }; }), timestamp, loanId);
+      } catch (emailError) {
+        Logger.log("ERROR al enviar email de anulación: " + emailError.toString());
+        return { status: "success", message: msg + ". (Nota: No se pudo enviar el correo de notificación)." };
+      }
     }
     return { status: "success", message: msg };
   } catch (error) {

@@ -557,6 +557,8 @@ function initEventListeners() {
             const firstItem = appState.loans.find(l => l.id === loanId);
             if (!firstItem) return;
             
+            saveCurrentDeliveryModalInputs();
+            
             const extraItem = {
                 id: loanId,
                 rut: firstItem.rut,
@@ -574,7 +576,8 @@ function initEventListeners() {
                 obs: "",
                 obsReturn: "",
                 daysOverdue: 0,
-                isNew: true
+                isNew: true,
+                isCancelled: false
             };
             
             appState.tempDeliveryItems.push(extraItem);
@@ -1263,17 +1266,90 @@ function openDeliveryModal(loanId) {
         return;
     }
     
-    appState.tempDeliveryItems = loanItems.map(item => ({ ...item, isNew: false }));
+    appState.tempDeliveryItems = loanItems.map(item => ({ ...item, isNew: false, isCancelled: false }));
     renderDeliveryModalInputs();
     
     dom.deliveryModal.classList.remove('hidden');
+}
+
+function saveCurrentDeliveryModalInputs() {
+    if (!appState.tempDeliveryItems) return;
+    appState.tempDeliveryItems.forEach((loanItem, index) => {
+        if (loanItem.isCancelled) return;
+        const select = document.getElementById(`delivery-code-select-${index}`);
+        const input = document.getElementById(`delivery-code-input-${index}`);
+        if (select && input) {
+            loanItem.assignedCode = input.value.trim().toUpperCase();
+            loanItem.isCustomCode = (select.value === 'custom');
+        }
+    });
 }
 
 function renderDeliveryModalInputs() {
     const loanId = appState.currentDeliveryLoanId;
     dom.deliveryInputsContainer.innerHTML = '';
     
+    const allCancelled = appState.tempDeliveryItems.length > 0 && appState.tempDeliveryItems.every(item => item.isCancelled);
+    if (dom.btnConfirmDelivery) {
+        if (allCancelled) {
+            dom.btnConfirmDelivery.className = "btn btn-danger btn-full";
+            dom.btnConfirmDelivery.style.marginTop = "20px";
+            dom.btnConfirmDelivery.innerHTML = '<i data-lucide="x-circle"></i> Confirmar Anulación de la Solicitud';
+        } else {
+            dom.btnConfirmDelivery.className = "btn btn-success btn-full";
+            dom.btnConfirmDelivery.style.marginTop = "20px";
+            dom.btnConfirmDelivery.innerHTML = '<i data-lucide="check-circle"></i> Confirmar Entrega Física';
+        }
+    }
+    
     appState.tempDeliveryItems.forEach((loanItem, index) => {
+        const row = document.createElement('div');
+        row.className = 'inventory-code-row';
+        row.style.marginBottom = '16px';
+        row.style.padding = '12px';
+        row.style.borderRadius = '8px';
+        row.style.transition = 'all 0.2s ease';
+        
+        const itemLabel = loanItem.isNew ? `[EXTRA] ${loanItem.item}` : loanItem.item;
+        
+        if (loanItem.isCancelled) {
+            row.style.background = 'rgba(239, 68, 68, 0.03)';
+            row.style.border = '1px dashed rgba(239, 68, 68, 0.4)';
+            row.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <label style="font-weight: 700; color: var(--text-secondary); font-size: 0.95rem; text-decoration: line-through;">
+                            ${index + 1}. ${itemLabel}
+                        </label>
+                        <span style="background: rgba(239, 68, 68, 0.12); color: var(--danger); font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.25);">
+                            ANULADO (No se entregará)
+                        </span>
+                    </div>
+                    <button class="btn btn-secondary btn-restore-item-delivery" data-index="${index}" style="padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;" title="Restaurar este equipo para entrega">
+                        <i data-lucide="rotate-ccw" style="width: 14px; height: 14px;"></i> Restaurar
+                    </button>
+                </div>
+                <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 6px 0 0 0;">
+                    Este equipo quedará anulado y su stock reservado se liberará automáticamente al confirmar.
+                </p>
+            `;
+            
+            const restoreBtn = row.querySelector('.btn-restore-item-delivery');
+            restoreBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                saveCurrentDeliveryModalInputs();
+                const idx = parseInt(e.currentTarget.getAttribute('data-index'));
+                appState.tempDeliveryItems[idx].isCancelled = false;
+                renderDeliveryModalInputs();
+            });
+            
+            dom.deliveryInputsContainer.appendChild(row);
+            return;
+        }
+        
+        row.style.border = '1px solid var(--glass-border)';
+        row.style.background = 'rgba(15, 23, 42, 0.01)';
+        
         const itemInv = appState.inventory.find(i => i.name === loanItem.item);
         const allCodes = itemInv && itemInv.codes ? itemInv.codes : [];
         
@@ -1283,21 +1359,13 @@ function renderDeliveryModalInputs() {
             
         const selectedInModal = [];
         for (let i = 0; i < index; i++) {
-            const codeEl = document.getElementById(`delivery-code-input-${i}`);
-            if (codeEl) {
-                selectedInModal.push(codeEl.value.toUpperCase().trim());
+            if (appState.tempDeliveryItems[i] && !appState.tempDeliveryItems[i].isCancelled) {
+                const prevAssigned = appState.tempDeliveryItems[i].assignedCode;
+                if (prevAssigned) selectedInModal.push(prevAssigned);
             }
         }
             
         const availableCodes = allCodes.filter(c => !rentedCodes.includes(c.toUpperCase().trim()) && !selectedInModal.includes(c.toUpperCase().trim()));
-        
-        const row = document.createElement('div');
-        row.className = 'inventory-code-row';
-        row.style.marginBottom = '20px';
-        row.style.padding = '12px';
-        row.style.border = '1px solid var(--glass-border)';
-        row.style.borderRadius = '8px';
-        row.style.background = 'rgba(15, 23, 42, 0.01)';
         
         let selectOptionsHtml = '<option value="">-- Seleccionar código disponible --</option>';
         availableCodes.forEach(code => {
@@ -1305,14 +1373,12 @@ function renderDeliveryModalInputs() {
         });
         selectOptionsHtml += `<option value="custom">Otro / Escanear código...</option>`;
         
-        const itemLabel = loanItem.isNew ? `[EXTRA] ${loanItem.item}` : loanItem.item;
-        
         row.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid var(--glass-border); padding-bottom: 6px;">
                 <label style="font-weight: 700; color: var(--text-primary); font-size: 0.95rem;">
                     ${index + 1}. ${itemLabel}
                 </label>
-                <button class="btn btn-danger btn-icon-only btn-remove-item-delivery" data-index="${index}" style="padding: 4px 8px; border-radius: 4px; font-size: 0.72rem; display: flex; align-items: center; gap: 4px; border: 1px solid rgba(239, 68, 68, 0.2);" title="Anular este equipo">
+                <button class="btn btn-danger btn-icon-only btn-remove-item-delivery" data-index="${index}" style="padding: 4px 8px; border-radius: 4px; font-size: 0.72rem; display: flex; align-items: center; gap: 4px; border: 1px solid rgba(239, 68, 68, 0.2);" title="Anular este equipo de la entrega">
                     <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i> Anular
                 </button>
             </div>
@@ -1341,9 +1407,20 @@ function renderDeliveryModalInputs() {
         const scanBtn = row.querySelector(`#btn-scan-delivery-trigger-${index}`);
         const removeBtn = row.querySelector('.btn-remove-item-delivery');
         
-        if (availableCodes.length > 0) {
+        // Restore previously selected code or use first available
+        if (loanItem.assignedCode) {
+            if (loanItem.isCustomCode || !availableCodes.includes(loanItem.assignedCode)) {
+                select.value = "custom";
+                customContainer.style.display = "block";
+                input.value = loanItem.assignedCode;
+            } else {
+                select.value = loanItem.assignedCode;
+                input.value = loanItem.assignedCode;
+            }
+        } else if (availableCodes.length > 0) {
             select.value = availableCodes[0];
             input.value = availableCodes[0];
+            loanItem.assignedCode = availableCodes[0];
         } else {
             select.value = "custom";
             customContainer.style.display = "block";
@@ -1353,11 +1430,19 @@ function renderDeliveryModalInputs() {
             if (e.target.value === 'custom') {
                 customContainer.style.display = "block";
                 input.value = '';
+                loanItem.assignedCode = '';
+                loanItem.isCustomCode = true;
                 input.focus();
             } else {
                 customContainer.style.display = "none";
                 input.value = e.target.value;
+                loanItem.assignedCode = e.target.value;
+                loanItem.isCustomCode = false;
             }
+        });
+        
+        input.addEventListener('input', (e) => {
+            loanItem.assignedCode = e.target.value.trim().toUpperCase();
         });
         
         scanBtn.addEventListener('click', (e) => {
@@ -1367,14 +1452,15 @@ function renderDeliveryModalInputs() {
         
         removeBtn.addEventListener('click', (e) => {
             e.preventDefault();
+            saveCurrentDeliveryModalInputs();
             const idx = parseInt(e.currentTarget.getAttribute('data-index'));
             const targetItem = appState.tempDeliveryItems[idx];
             if (targetItem.isNew) {
                 appState.tempDeliveryItems.splice(idx, 1);
-                renderDeliveryModalInputs();
             } else {
-                removeDeliveryItem(loanId, targetItem.item);
+                targetItem.isCancelled = true;
             }
+            renderDeliveryModalInputs();
         });
         
         dom.deliveryInputsContainer.appendChild(row);
@@ -1423,15 +1509,51 @@ async function confirmPhysicalDelivery() {
     const loanId = appState.currentDeliveryLoanId;
     if (!loanId || !appState.tempDeliveryItems || appState.tempDeliveryItems.length === 0) return;
     
-    const globalObsVal = dom.deliveryGlobalObs ? dom.deliveryGlobalObs.value.trim() : '';
+    saveCurrentDeliveryModalInputs();
     
+    const activeItems = appState.tempDeliveryItems.filter(item => !item.isCancelled);
+    const cancelledItems = appState.tempDeliveryItems.filter(item => item.isCancelled);
+    
+    // Caso 1: Todos los equipos fueron anulados en la entrega
+    if (activeItems.length === 0) {
+        if (!confirm("Todos los equipos de esta solicitud han sido anulados. ¿Deseas confirmar la anulación completa de la solicitud? Esta acción liberará todo el stock reservado al inventario.")) {
+            return;
+        }
+        
+        dom.deliveryModal.classList.add('hidden');
+        
+        if (CONFIG.demoMode) {
+            const loanItems = appState.loans.filter(l => l.id === loanId);
+            loanItems.forEach(loan => {
+                loan.status = "Anulado";
+                loan.code = "Anulado";
+                const invItem = appState.inventory.find(i => i.name === loan.item);
+                if (invItem) {
+                    invItem.available = Math.min(invItem.total, invItem.available + 1);
+                }
+            });
+            saveDemoState();
+            showToast("Solicitud anulada con éxito y stock liberado.", "info");
+            loadData();
+        } else {
+            executeCancelApi(loanId);
+        }
+        return;
+    }
+    
+    // Caso 2: Hay equipos activos para entregar
+    const globalObsVal = dom.deliveryGlobalObs ? dom.deliveryGlobalObs.value.trim() : '';
     const itemsPayload = [];
     const selectedCodes = new Set();
     
     for (let index = 0; index < appState.tempDeliveryItems.length; index++) {
-        const inputVal = document.getElementById(`delivery-code-input-${index}`).value.trim().toUpperCase();
+        const item = appState.tempDeliveryItems[index];
+        if (item.isCancelled) continue;
+        
+        const codeInput = document.getElementById(`delivery-code-input-${index}`);
+        const inputVal = codeInput ? codeInput.value.trim().toUpperCase() : (item.assignedCode || '');
         if (!inputVal) {
-            showToast(`Ingresa el código para el equipo: ${appState.tempDeliveryItems[index].item}`, "warning");
+            showToast(`Ingresa el código para el equipo: ${item.item}`, "warning");
             return;
         }
         if (selectedCodes.has(inputVal)) {
@@ -1441,22 +1563,27 @@ async function confirmPhysicalDelivery() {
         selectedCodes.add(inputVal);
         
         itemsPayload.push({
-            name: appState.tempDeliveryItems[index].item,
+            name: item.item,
             code: inputVal,
             obs: globalObsVal,
-            isNew: !!appState.tempDeliveryItems[index].isNew
+            isNew: !!item.isNew
         });
     }
     
-    console.log("[DEBUG AVP] Confirmando entrega física con items:", itemsPayload);
+    const cancelledPayload = cancelledItems.map(item => ({
+        name: item.item,
+        isNew: !!item.isNew
+    }));
     
+    console.log("[DEBUG AVP] Confirmando entrega física:", { loanId, itemsPayload, cancelledPayload });
     dom.deliveryModal.classList.add('hidden');
     
     if (CONFIG.demoMode) {
         const dateStr = getNowFormatted();
         
-        appState.tempDeliveryItems.forEach((tempItem, index) => {
-            const assigned = itemsPayload[index];
+        // Entregar equipos activos
+        activeItems.forEach(tempItem => {
+            const assigned = itemsPayload.find(p => p.name === tempItem.item);
             if (tempItem.isNew) {
                 const newLoanRecord = {
                     id: loanId,
@@ -1464,7 +1591,7 @@ async function confirmPhysicalDelivery() {
                     name: tempItem.name,
                     email: tempItem.email,
                     item: tempItem.item,
-                    code: assigned.code,
+                    code: assigned ? assigned.code : "Pte. Entrega",
                     status: "Retirado",
                     dateOut: tempItem.dateOut,
                     dateDeliver: dateStr,
@@ -1486,35 +1613,43 @@ async function confirmPhysicalDelivery() {
                 const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
                 if (loanItem) {
                     loanItem.status = "Retirado";
-                    loanItem.code = assigned.code;
+                    loanItem.code = assigned ? assigned.code : loanItem.code;
                     loanItem.obs = globalObsVal;
                     loanItem.dateDeliver = dateStr;
                 }
             }
         });
         
-        saveDemoState();
-        
-        console.log(`[SIMULACIÓN GMAIL 2/3] Enviando Comprobante de Retiro Físico a ${appState.tempDeliveryItems[0].email}:`, {
-            alumno: appState.tempDeliveryItems[0].name,
-            equipos: itemsPayload,
-            fechaRetiro: dateStr,
-            loanId: loanId
+        // Anular ítems excluidos y devolver stock
+        cancelledItems.forEach(tempItem => {
+            if (!tempItem.isNew) {
+                const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
+                if (loanItem) {
+                    loanItem.status = "Anulado";
+                    loanItem.code = "Anulado";
+                    const invItem = appState.inventory.find(i => i.name === tempItem.item);
+                    if (invItem) {
+                        invItem.available = Math.min(invItem.total, invItem.available + 1);
+                    }
+                }
+            }
         });
         
+        saveDemoState();
         showToast(`Retiro físico confirmado. Comprobante enviado a ${appState.tempDeliveryItems[0].email}`, "success");
         loadData();
     } else {
-        executeDeliverLoanApi(loanId, itemsPayload);
+        executeDeliverLoanApi(loanId, itemsPayload, cancelledPayload);
     }
 }
 
-async function executeDeliverLoanApi(loanId, items) {
+async function executeDeliverLoanApi(loanId, items, cancelledItems) {
     showToast("Confirmando entrega en Google Sheets...", "info");
     try {
         const payload = {
             loanId: loanId,
             items: items,
+            cancelledItems: cancelledItems || [],
             timestamp: getNowFormatted()
         };
         
@@ -1527,7 +1662,7 @@ async function executeDeliverLoanApi(loanId, items) {
         
         const data = await response.json();
         if (data.status === "success") {
-            showToast(data.message || "[FALLBACK] Retiro registrado (el servidor no envió el detalle de los equipos)", "success");
+            showToast(data.message || "Retiro registrado con éxito.", "success");
             loadData();
         } else {
             showToast(data.message || "Error al registrar entrega.", "danger");
@@ -1535,74 +1670,6 @@ async function executeDeliverLoanApi(loanId, items) {
     } catch (e) {
         console.error(e);
         showToast("Error de conexión.", "danger");
-    }
-}
-
-async function removeDeliveryItem(loanId, itemName) {
-    if (!confirm(`¿Anular la solicitud del equipo "${itemName}" para este préstamo? El resto de los equipos se mantendrán en la solicitud.`)) {
-        return;
-    }
-    
-    if (CONFIG.demoMode) {
-        const loanIndex = appState.loans.findIndex(l => l.id === loanId && l.item === itemName && l.status === "Solicitado");
-        if (loanIndex > -1) {
-            appState.loans[loanIndex].status = "Anulado";
-            if (appState.loans[loanIndex].code === "Pte. Entrega" || !appState.loans[loanIndex].code) {
-                appState.loans[loanIndex].code = "Anulado";
-            }
-            
-            // Reincorporar stock
-            const invItem = appState.inventory.find(i => i.name === itemName);
-            if (invItem) {
-                invItem.available = Math.min(invItem.total, invItem.available + 1);
-            }
-            
-            saveDemoState();
-            showToast(`Solicitud de "${itemName}" anulada correctamente.`, "info");
-            
-            await loadData();
-            
-            const remainingItems = appState.loans.filter(l => l.id === loanId && l.status === "Solicitado");
-            if (remainingItems.length > 0) {
-                openDeliveryModal(loanId);
-            } else {
-                dom.deliveryModal.classList.add('hidden');
-            }
-        }
-    } else {
-        showToast("Anulando equipo en Google Sheets...", "info");
-        try {
-            const payload = {
-                loanId: loanId,
-                itemName: itemName,
-                timestamp: getNowFormatted()
-            };
-            
-            const response = await fetch(`${CONFIG.scriptUrl}?action=cancelLoan`, {
-                method: 'POST',
-                mode: 'cors',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(payload)
-            });
-            
-            const data = await response.json();
-            if (data.status === "success") {
-                showToast(`Equipo "${itemName}" anulado con éxito`, "success");
-                await loadData();
-                
-                const remainingItems = appState.loans.filter(l => l.id === loanId && l.status === "Solicitado");
-                if (remainingItems.length > 0) {
-                    openDeliveryModal(loanId);
-                } else {
-                    dom.deliveryModal.classList.add('hidden');
-                }
-            } else {
-                showToast(data.message || "Error al anular el equipo.", "danger");
-            }
-        } catch (e) {
-            console.error(e);
-            showToast("Error de conexión.", "danger");
-        }
     }
 }
 
