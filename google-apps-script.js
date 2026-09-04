@@ -200,31 +200,9 @@ function doGet(e) {
 
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    autoUpgradeHeaders(ss);
     
     if (action === "getInitData") {
-      const sheet = ss.getSheetByName("Inventario");
-      let debugInfo = {};
-      if (sheet) {
-        const values = sheet.getDataRange().getValues();
-        if (values.length > 0) {
-          const headers = values[0].map(normalizeHeader);
-          debugInfo = {
-            detectedHeaders: values[0],
-            normalizedHeaders: headers,
-            indices: getInventoryHeaderIndices(headers)
-          };
-        }
-      }
-      responseData = {
-        status: "success",
-        inventory: getInventoryData(ss),
-        students: getStudentsData(ss),
-        loans: getLoansData(ss),
-        subjects: getSubjectsData(ss),
-        sheetUrl: ss.getUrl(),
-        debugInfo: debugInfo
-      };
+      responseData = getCachedInitData(ss);
     } 
     else if (action === "checkStudent") {
       const rut = e.parameter.rut;
@@ -249,6 +227,74 @@ function doGet(e) {
 
   return ContentService.createTextOutput(JSON.stringify(responseData))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function clearInitDataCache() {
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.removeAll(["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_url"]);
+  } catch (e) {
+    Logger.log("Error clearing cache: " + e.toString());
+  }
+}
+
+function getCachedInitData(ss) {
+  const cache = CacheService.getScriptCache();
+  try {
+    const cachedInv = cache.get("avp_inv");
+    const cachedSt = cache.get("avp_st");
+    const cachedLn = cache.get("avp_ln");
+    const cachedSb = cache.get("avp_sb");
+    const cachedUrl = cache.get("avp_url");
+    
+    if (cachedInv && cachedSt && cachedLn && cachedSb) {
+      return {
+        status: "success",
+        inventory: JSON.parse(cachedInv),
+        students: JSON.parse(cachedSt),
+        loans: JSON.parse(cachedLn),
+        subjects: JSON.parse(cachedSb),
+        sheetUrl: cachedUrl || ss.getUrl(),
+        fromCache: true
+      };
+    }
+  } catch (e) {
+    Logger.log("Cache read error, falling back to sheet: " + e.toString());
+  }
+  
+  const inventory = getInventoryData(ss);
+  const students = getStudentsData(ss);
+  const loans = getLoansData(ss);
+  const subjects = getSubjectsData(ss);
+  const sheetUrl = ss.getUrl();
+  
+  try {
+    const invStr = JSON.stringify(inventory);
+    const stStr = JSON.stringify(students);
+    const lnStr = JSON.stringify(loans);
+    const sbStr = JSON.stringify(subjects);
+    
+    const entries = {};
+    if (invStr.length < 95000) entries["avp_inv"] = invStr;
+    if (stStr.length < 95000) entries["avp_st"] = stStr;
+    if (lnStr.length < 95000) entries["avp_ln"] = lnStr;
+    if (sbStr.length < 95000) entries["avp_sb"] = sbStr;
+    entries["avp_url"] = sheetUrl;
+    
+    cache.putAll(entries, 600); // 10 minutos de caché
+  } catch (e) {
+    Logger.log("Cache write error: " + e.toString());
+  }
+  
+  return {
+    status: "success",
+    inventory: inventory,
+    students: students,
+    loans: loans,
+    subjects: subjects,
+    sheetUrl: sheetUrl,
+    fromCache: false
+  };
 }
 
 // ==========================================
@@ -295,6 +341,10 @@ function doPost(e) {
     }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
+    }
+    
+    if (responseData && responseData.status === "success") {
+      clearInitDataCache();
     }
   } catch (error) {
     responseData = { status: "error", message: error.toString() };

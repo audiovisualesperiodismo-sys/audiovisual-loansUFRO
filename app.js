@@ -243,7 +243,7 @@ function groupInventoryItems(rawInventory) {
     return grouped;
 }
 
-async function loadData() {
+async function loadData(forceRefresh = false) {
     if (CONFIG.demoMode) {
         if (appState.inventory.length === 0) {
             let rawInv = JSON.parse(localStorage.getItem('audiolend_demo_inventory'));
@@ -277,7 +277,39 @@ async function loadData() {
             return;
         }
         
-        showToast("Conectando con base de datos UFRO...", "info");
+        // --- SWR (Stale-While-Revalidate): Carga instantánea desde caché local ---
+        let hasRenderedFromCache = false;
+        if (!forceRefresh) {
+            const cachedStr = localStorage.getItem('audiolend_offline_cache');
+            if (cachedStr) {
+                try {
+                    const cachedData = JSON.parse(cachedStr);
+                    if (cachedData && cachedData.inventory && cachedData.inventory.length > 0) {
+                        appState.inventory = groupInventoryItems(cachedData.inventory);
+                        appState.students = cachedData.students || [];
+                        appState.loans = cachedData.loans || [];
+                        appState.subjects = cachedData.subjects || [];
+                        
+                        updateConnectionStatus(false);
+                        renderLoansModule();
+                        renderSubjectsDropdown();
+                        
+                        if (appState.isAdminLoggedIn) {
+                            updateAdminDashboard();
+                            renderAdminLoans(appState.activeAdminLoanFilter);
+                        }
+                        hasRenderedFromCache = true;
+                    }
+                } catch (cacheErr) {
+                    console.warn("Aviso: No se pudo leer caché offline:", cacheErr);
+                }
+            }
+        }
+        
+        if (forceRefresh || !hasRenderedFromCache) {
+            showToast(forceRefresh ? "Actualizando datos desde Google Sheets..." : "Conectando con base de datos UFRO...", "info");
+        }
+        
         try {
             updateConnectionStatus(null);
             const response = await fetch(`${CONFIG.scriptUrl}?action=getInitData`);
@@ -286,14 +318,22 @@ async function loadData() {
             const data = await response.json();
             if (data.status === "error") throw new Error(data.message);
             
-            if (data.debugInfo) {
-                console.log("[DEBUG AVP] Encabezados del Sheet e índices detectados:", data.debugInfo);
-            }
-            
             appState.inventory = groupInventoryItems(data.inventory);
-            appState.students = data.students;
-            appState.loans = data.loans;
+            appState.students = data.students || [];
+            appState.loans = data.loans || [];
             appState.subjects = data.subjects || [];
+            
+            // Guardar en caché offline para la próxima apertura instantánea
+            try {
+                localStorage.setItem('audiolend_offline_cache', JSON.stringify({
+                    inventory: data.inventory,
+                    students: data.students,
+                    loans: data.loans,
+                    subjects: data.subjects
+                }));
+            } catch (storageErr) {
+                console.warn("Aviso: Cuota de almacenamiento local excedida:", storageErr);
+            }
             
             if (data.sheetUrl) {
                 CONFIG.sheetUrl = data.sheetUrl;
@@ -311,11 +351,19 @@ async function loadData() {
                 updateAdminDashboard();
                 renderAdminLoans(appState.activeAdminLoanFilter);
             }
-            showToast("Datos UFRO sincronizados correctamente", "success");
+            
+            if (forceRefresh) {
+                showToast("Datos actualizados desde Google Sheets", "success");
+            }
         } catch (error) {
             console.error(error);
-            showToast(`Error de conexión: ${error.message || error}. Volviendo a Modo Demo.`, "danger");
-            setDemoMode(true);
+            if (hasRenderedFromCache) {
+                showToast("Modo sin conexión: mostrando datos guardados previamente.", "warning");
+                updateConnectionStatus(false);
+            } else {
+                showToast(`Error de conexión: ${error.message || error}. Volviendo a Modo Demo.`, "danger");
+                setDemoMode(true);
+            }
         }
     }
 }
@@ -379,7 +427,7 @@ function initEventListeners() {
     }
     
     dom.btnRefresh.addEventListener('click', () => {
-        loadData();
+        loadData(true);
     });
     
     dom.navButtons.forEach(btn => {
@@ -918,15 +966,18 @@ function verifyStudent() {
     const formattedRut = formatRut(rawRut);
     dom.studentRut.value = formattedRut;
     
+    const cleanSearch = cleanRut(formattedRut);
+    const localStudent = appState.students.find(s => cleanRut(s.rut) === cleanSearch);
+    if (localStudent) {
+        processStudentVerificationResult(localStudent);
+        return;
+    }
+    
     if (CONFIG.demoMode) {
-        const student = appState.students.find(s => cleanRut(s.rut) === cleanRut(formattedRut));
-        if (student) {
-            processStudentVerificationResult(student);
-        } else {
-            showToast("Estudiante no registrado en la carrera de Periodismo.", "danger");
-            resetStudentValidation();
-        }
+        showToast("Estudiante no registrado en la carrera de Periodismo.", "danger");
+        resetStudentValidation();
     } else {
+        // Fallback a Google Sheets en caso de que el alumno haya sido agregado recientemente
         executeVerifyStudentApi(formattedRut);
     }
 }
