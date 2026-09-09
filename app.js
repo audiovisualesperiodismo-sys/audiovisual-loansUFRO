@@ -288,7 +288,11 @@ async function loadData(forceRefresh = false) {
         
         // --- SWR (Stale-While-Revalidate): Carga instantánea desde caché local ---
         let hasRenderedFromCache = false;
-        if (!forceRefresh) {
+        if (forceRefresh) {
+            try {
+                localStorage.removeItem('audiolend_offline_cache');
+            } catch (e) {}
+        } else {
             const cachedStr = localStorage.getItem('audiolend_offline_cache');
             if (cachedStr) {
                 try {
@@ -321,7 +325,8 @@ async function loadData(forceRefresh = false) {
         
         try {
             updateConnectionStatus(null);
-            const response = await fetch(`${CONFIG.scriptUrl}?action=getInitData`);
+            const fetchUrl = `${CONFIG.scriptUrl}?action=getInitData&_t=${Date.now()}&fresh=${forceRefresh ? '1' : '0'}`;
+            const response = await fetch(fetchUrl, { cache: 'no-store' });
             if (!response.ok) throw new Error("Error en red");
             
             const data = await response.json();
@@ -476,6 +481,9 @@ function initEventListeners() {
                 setTimeout(() => updateCharts(), 100);
             } else if (target === 'admin-tab-loans') {
                 renderAdminLoans(appState.activeAdminLoanFilter);
+                if (!CONFIG.demoMode) {
+                    loadData(true);
+                }
             } else if (target === 'admin-tab-config') {
                 renderAdminConfigLists();
             }
@@ -1349,7 +1357,10 @@ async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject
                 progRetiro: progRetiro,
                 progDevolucion: progDevolucion
             });
-            loadData();
+            try {
+                localStorage.removeItem('audiolend_offline_cache');
+            } catch (e) {}
+            await loadData(true);
         } else {
             showToast(data.message || "Error al solicitar préstamo.", "danger");
             dom.btnConfirmLoan.disabled = false;
@@ -1787,7 +1798,10 @@ async function executeDeliverLoanApi(loanId, items, cancelledItems) {
         const data = await response.json();
         if (data.status === "success") {
             showToast(data.message || "Retiro registrado con éxito.", "success");
-            loadData();
+            try {
+                localStorage.removeItem('audiolend_offline_cache');
+            } catch (e) {}
+            await loadData(true);
         } else {
             showToast(data.message || "Error al registrar entrega.", "danger");
         }
@@ -1896,7 +1910,10 @@ async function executeReturnApi(loanId, obsReturn) {
         const data = await response.json();
         if (data.status === "success") {
             showToast(data.message || "Devolución procesada e email enviado correctamente", "success");
-            await loadData();
+            try {
+                localStorage.removeItem('audiolend_offline_cache');
+            } catch (e) {}
+            await loadData(true);
             renderAdminLoans(appState.activeAdminLoanFilter);
         } else {
             showToast(data.message || "Error al procesar devolución.", "danger");
@@ -1971,7 +1988,10 @@ async function executeCancelApi(loanId) {
         const data = await response.json();
         if (data.status === "success") {
             showToast("Préstamo anulado con éxito", "success");
-            await loadData();
+            try {
+                localStorage.removeItem('audiolend_offline_cache');
+            } catch (e) {}
+            await loadData(true);
             renderAdminLoans(appState.activeAdminLoanFilter);
         } else {
             showToast(data.message || "Error al anular el préstamo.", "danger");
@@ -2717,7 +2737,7 @@ async function saveEquipmentConfig() {
             if (data.status === "success") {
                 showToast(`Equipo "${name}" agregado.`, "success");
                 dom.formAddEquipment.reset();
-                loadData();
+                loadData(true);
             } else {
                 showToast(data.message || "Error al agregar.", "danger");
             }
@@ -2777,7 +2797,7 @@ async function saveStudentConfig() {
                 showToast(`Estudiante registrado correctamente`, "success");
                 dom.formAddStudent.reset();
                 dom.stDebtGroup.classList.add('hidden');
-                loadData();
+                loadData(true);
             } else {
                 showToast(data.message || "Error al registrar.", "danger");
             }
@@ -2809,7 +2829,7 @@ async function deleteEquipmentConfig(id, name) {
             const data = await response.json();
             if (data.status === "success") {
                 showToast("Equipo eliminado con éxito.", "success");
-                loadData();
+                loadData(true);
             } else {
                 showToast(data.message || "Error.", "danger");
             }
@@ -2840,7 +2860,7 @@ async function deleteStudentConfig(rut, name) {
             const data = await response.json();
             if (data.status === "success") {
                 showToast("Estudiante eliminado con éxito.", "success");
-                loadData();
+                loadData(true);
             } else {
                 showToast(data.message || "Error.", "danger");
             }
@@ -2877,7 +2897,7 @@ async function toggleStudentSanction(rut, name, blocked) {
                 const data = await response.json();
                 if (data.status === "success") {
                     showToast(data.message || "Sanción levantada con éxito.", "success");
-                    loadData();
+                    loadData(true);
                 } else {
                     showToast(data.message || "Error al levantar sanción.", "danger");
                 }
@@ -2914,7 +2934,7 @@ async function toggleStudentSanction(rut, name, blocked) {
                 const data = await response.json();
                 if (data.status === "success") {
                     showToast(data.message || "Estudiante bloqueado con éxito.", "success");
-                    loadData();
+                    loadData(true);
                 } else {
                     showToast(data.message || "Error al bloquear estudiante.", "danger");
                 }
