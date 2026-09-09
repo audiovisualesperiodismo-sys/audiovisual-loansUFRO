@@ -788,10 +788,25 @@ function initEventListeners() {
                     text += `- Imagen: ${info.indices.imageIdx !== -1 ? 'OK (col ' + (info.indices.imageIdx + 1) + ')' : 'No encontrado (-1)'}\n`;
                     text += `- Descripción: ${info.indices.descriptionIdx !== -1 ? 'OK (col ' + (info.indices.descriptionIdx + 1) + ')' : 'No encontrado (-1)'}\n\n`;
                     
+                    if (info.sampleRows && info.sampleRows.length > 0) {
+                        text += `📦 Estado actual de equipos en la planilla Google Sheets:\n`;
+                        info.sampleRows.forEach(sr => {
+                            const icon = sr.disponible > 0 ? "✅" : "❌ (SIN STOCK DISPONIBLE)";
+                            text += `• Fila ${sr.row}: ${sr.name} | Total: ${sr.total} | Disponible: ${sr.disponible} ${icon}\n`;
+                        });
+                        text += `\n`;
+                    }
+                    
+                    if (info.indices.availableIdx === -1) {
+                        text += `⚠️ ATENCIÓN: No se encuentra la columna 'Disponible' en la hoja 'Inventario'. Agrega una columna llamada 'Disponible' en la fila 1 de tu Google Sheets.\n\n`;
+                    } else if (info.sampleRows && info.sampleRows.some(sr => sr.disponible <= 0)) {
+                        text += `ℹ️ NOTA DE STOCK: Uno o más equipos tienen '0' en la columna 'Disponible' de Google Sheets. Si deseas que los alumnos puedan solicitarlos, abre tu Google Sheet y escribe la cantidad disponible (ej: 1, 2, etc.) en esa columna.\n\n`;
+                    }
+                    
                     if (info.indices.imageIdx === -1 || info.indices.descriptionIdx === -1) {
                         text += `⚠️ ATENCIÓN: El script no está encontrando las columnas de Imagen o Descripción. Asegúrate de agregarlas en la fila 1 de la pestaña 'Inventario' de tu Google Sheets con los nombres recomendados (Imagen, Descripción) y publicar una 'Nueva versión' del código en Apps Script.`;
                     } else {
-                        text += `✅ TODO CORRECTO: Las columnas e índices han sido asignados correctamente. Si las imágenes siguen sin verse, comprueba que los enlaces pegados en las celdas sean válidos y públicos.`;
+                        text += `✅ TODO CORRECTO: Las columnas e índices han sido detectados correctamente.`;
                     }
                     diagnosticsResult.textContent = text;
                 } else {
