@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=29.0">
+    <link rel="stylesheet" href="styles.css?v=30.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -170,11 +170,13 @@
                                 <div class="input-group">
                                     <label for="loan-date-out">Fecha de Retiro</label>
                                     <input type="date" id="loan-date-out" required>
+                                    <small style="color:var(--text-secondary); font-size:0.72rem; display:block; margin-top:2px;">Máximo 2 días de antelación (hoy, mañana o pasado mañana)</small>
                                 </div>
                                 
                                 <div class="input-group">
-                                    <label for="loan-date-in">Fecha de Entrega</label>
+                                    <label for="loan-date-in">Fecha de Devolución</label>
                                     <input type="date" id="loan-date-in" required>
+                                    <small style="color:var(--text-secondary); font-size:0.72rem; display:block; margin-top:2px;">Puede ser el mismo día o hasta 4 días de préstamo</small>
                                 </div>
                                 
                                 <div class="input-group">
@@ -331,7 +333,8 @@
                                             <th>Equipo</th>
                                             <th>Código Inventario</th>
                                             <th>F. Solicitud</th>
-                                            <th>F. Retiro</th>
+                                            <th>F. Retiro Solicitada</th>
+                                            <th>F. Retiro Real</th>
                                             <th>F. Devolución</th>
                                             <th>Días Atraso</th>
                                             <th>Estado</th>
@@ -719,6 +722,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=29.0"></script>
+    <script src="app.js?v=30.0"></script>
 </body>
 </html>

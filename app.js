@@ -157,13 +157,22 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('audiolend_clean_slate_v1', 'true');
     }
     
-    // Configurar fecha mínima de retiro para hoy
+    // Configurar fecha mínima de retiro (hoy) y máxima (hoy + 2 días de antelación)
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
+    const minDateStr = `${yyyy}-${mm}-${dd}`;
+    
+    const maxAdvanceDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
+    const maxY = maxAdvanceDate.getFullYear();
+    const maxM = String(maxAdvanceDate.getMonth() + 1).padStart(2, '0');
+    const maxD = String(maxAdvanceDate.getDate()).padStart(2, '0');
+    const maxDateStr = `${maxY}-${maxM}-${maxD}`;
+    
     if (dom.loanDateOut) {
-        dom.loanDateOut.min = `${yyyy}-${mm}-${dd}`;
+        dom.loanDateOut.min = minDateStr;
+        dom.loanDateOut.max = maxDateStr;
     }
     
     loadData();
@@ -524,14 +533,36 @@ function initEventListeners() {
     dom.loanDateOut.addEventListener('change', () => {
         const dateOut = dom.loanDateOut.value;
         if (dateOut) {
-            // Poner la fecha mínima de entrega igual a la de retiro
+            // Validar límites de fecha de retiro: hoy y máx 2 días de antelación
+            const t = new Date();
+            const todayZero = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+            const maxAdvance = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 2);
+            
+            const partsOut = dateOut.split('-').map(Number);
+            const dateOutObj = new Date(partsOut[0], partsOut[1] - 1, partsOut[2]);
+            
+            if (dateOutObj < todayZero) {
+                showToast("No puedes seleccionar una fecha de retiro anterior a hoy.", "warning");
+                dom.loanDateOut.value = "";
+                dom.loanDateIn.min = "";
+                dom.loanDateIn.max = "";
+                return;
+            }
+            if (dateOutObj > maxAdvance) {
+                showToast("No se pueden solicitar equipos con más de 2 días de antelación.", "warning");
+                dom.loanDateOut.value = "";
+                dom.loanDateIn.min = "";
+                dom.loanDateIn.max = "";
+                return;
+            }
+
+            // Poner la fecha mínima de entrega igual a la de retiro (permite retiro y devolución el mismo día)
             dom.loanDateIn.min = dateOut;
             
             // Calcular la fecha máxima (retiro + 4 días)
-            const parts = dateOut.split('-');
-            const y = parseInt(parts[0], 10);
-            const m = parseInt(parts[1], 10) - 1;
-            const d = parseInt(parts[2], 10);
+            const y = partsOut[0];
+            const m = partsOut[1] - 1;
+            const d = partsOut[2];
             
             const maxDate = new Date(y, m, d + 4);
             const maxYear = maxDate.getFullYear();
@@ -546,7 +577,7 @@ function initEventListeners() {
             if (dateIn) {
                 if (dateIn < dateOut || dateIn > maxDateStr) {
                     dom.loanDateIn.value = "";
-                    showToast("La fecha de entrega se ha restablecido por estar fuera del límite de 4 días.", "warning");
+                    showToast("La fecha de devolución se ha restablecido por estar fuera del límite de 4 días.", "warning");
                 }
             }
         } else {
@@ -569,8 +600,8 @@ function initEventListeners() {
             const dateOutObj = new Date(partsOut[0], partsOut[1] - 1, partsOut[2]);
             const dateInObj = new Date(partsIn[0], partsIn[1] - 1, partsIn[2]);
             
-            if (dateOutObj >= dateInObj) {
-                showToast("La fecha de retiro debe ser anterior a la de entrega.", "warning");
+            if (dateInObj < dateOutObj) {
+                showToast("La fecha de devolución no puede ser anterior a la de retiro.", "warning");
                 dom.loanDateIn.value = "";
             } else {
                 const diffTime = dateInObj - dateOutObj;
@@ -1156,8 +1187,22 @@ async function processLoanCheckout() {
     const dateOutObj = new Date(partsOut[0], partsOut[1] - 1, partsOut[2]);
     const dateInObj = new Date(partsIn[0], partsIn[1] - 1, partsIn[2]);
     
-    if (dateOutObj >= dateInObj) {
-        showToast("La fecha de retiro debe ser anterior a la de entrega.", "warning");
+    // Validar que la fecha de retiro sea hoy o hasta 2 días de antelación
+    const t = new Date();
+    const todayZero = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+    const maxAdvanceZero = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 2);
+    
+    if (dateOutObj < todayZero) {
+        showToast("No puedes seleccionar una fecha de retiro anterior a hoy.", "warning");
+        return;
+    }
+    if (dateOutObj > maxAdvanceZero) {
+        showToast("No se pueden solicitar equipos con más de 2 días de antelación.", "warning");
+        return;
+    }
+    
+    if (dateInObj < dateOutObj) {
+        showToast("La fecha de devolución no puede ser anterior a la de retiro.", "warning");
         return;
     }
     
@@ -1352,6 +1397,19 @@ function renderDeliveryModalInputs() {
             dom.btnConfirmDelivery.innerHTML = '<i data-lucide="check-circle"></i> Confirmar Entrega Física';
         }
     }
+    
+    // Banner informativo con fechas de solicitud y devolución pactada
+    const firstItem = appState.tempDeliveryItems[0] || {};
+    const infoHeader = document.createElement('div');
+    infoHeader.style.cssText = "background: rgba(79, 70, 229, 0.06); border: 1px solid rgba(79, 70, 229, 0.15); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.82rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;";
+    infoHeader.innerHTML = `
+        <div><strong style="color:var(--text-primary);">Alumno:</strong> ${firstItem.name || '-'} (<code>${firstItem.rut || '-'}</code>)</div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+            <div><strong style="color:var(--primary);">F. Retiro Solicitada:</strong> ${firstItem.progRetiro ? formatDisplayDate(firstItem.progRetiro) : 'Hoy'}</div>
+            <div><strong style="color:var(--text-primary);">F. Devolución Pactada:</strong> ${firstItem.progDevolucion ? formatDisplayDate(firstItem.progDevolucion) : '-'}</div>
+        </div>
+    `;
+    dom.deliveryInputsContainer.appendChild(infoHeader);
     
     appState.tempDeliveryItems.forEach((loanItem, index) => {
         const row = document.createElement('div');
@@ -2012,7 +2070,7 @@ function renderAdminLoans(filter = "all") {
     if (filtered.length === 0) {
         dom.adminLoansTableBody.innerHTML = `
             <tr>
-                <td colspan="11" class="table-empty">
+                <td colspan="12" class="table-empty">
                     <i data-lucide="list"></i>
                     <p>No hay solicitudes registradas.</p>
                 </td>
@@ -2084,7 +2142,12 @@ function renderAdminLoans(filter = "all") {
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; align-items:flex-start;">
-                    <span>${loan.status === 'Solicitado' ? 'Pendiente' : formatDisplayDate(loan.dateDeliver || loan.dateOut)}</span>
+                    <span style="font-weight:600; color:var(--primary);">${loan.progRetiro ? formatDisplayDate(loan.progRetiro) : '-'}</span>
+                </div>
+            </td>
+            <td>
+                <div style="display:flex; flex-direction:column; align-items:flex-start;">
+                    <span>${loan.status === 'Solicitado' ? '<span style="color:var(--text-secondary); font-style:italic;">Pendiente</span>' : formatDisplayDate(loan.dateDeliver || loan.dateOut)}</span>
                 </div>
             </td>
             <td>
@@ -3061,8 +3124,10 @@ function exportLoansToExcel() {
         "Codigo Inventario",
         "Asignatura",
         "Fecha Registro/Solicitud",
+        "Fecha Retiro Solicitada (Prog.)",
         "Fecha Retiro Real",
         "Fecha Devolucion Real",
+        "Fecha Devolucion Programada",
         "Estado",
         "Observaciones",
         "Dias Atraso (Activo)",
@@ -3082,8 +3147,10 @@ function exportLoansToExcel() {
             loan.code || "",
             loan.subject || "",
             formatDisplayDate(loan.dateOut),
+            loan.progRetiro ? formatDisplayDate(loan.progRetiro) : "-",
             loan.status === 'Solicitado' ? "Pendiente" : formatDisplayDate(loan.dateDeliver || loan.dateOut),
             loan.status === 'Devuelto' ? formatDisplayDate(loan.dateIn) : (loan.status === 'Retirado' ? 'En Transito' : '-'),
+            loan.progDevolucion ? formatDisplayDate(loan.progDevolucion) : "-",
             loan.status || "",
             loan.obs || "",
             daysOverdue > 0 ? `${daysOverdue}` : "0",
