@@ -200,9 +200,11 @@ function doGet(e) {
 
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    autoUpgradeHeaders(ss);
     
     if (action === "getInitData") {
-      responseData = getCachedInitData(ss);
+      const isFresh = (e && e.parameter && (e.parameter.fresh === "1" || e.parameter._t));
+      responseData = getCachedInitData(ss, isFresh);
     } 
     else if (action === "checkStudent") {
       const rut = e.parameter.rut;
@@ -232,56 +234,93 @@ function doGet(e) {
 function clearInitDataCache() {
   try {
     const cache = CacheService.getScriptCache();
-    cache.removeAll(["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_url"]);
+    const keys = ["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_url"];
+    cache.removeAll(keys);
+    keys.forEach(k => {
+      try { cache.remove(k); } catch(err) {}
+    });
   } catch (e) {
     Logger.log("Error clearing cache: " + e.toString());
   }
 }
 
-function getCachedInitData(ss) {
+function getCachedInitData(ss, isFresh) {
   const cache = CacheService.getScriptCache();
-  try {
-    const cachedInv = cache.get("avp_inv");
-    const cachedSt = cache.get("avp_st");
-    const cachedLn = cache.get("avp_ln");
-    const cachedSb = cache.get("avp_sb");
-    const cachedUrl = cache.get("avp_url");
-    
-    if (cachedInv && cachedSt && cachedLn && cachedSb) {
-      return {
-        status: "success",
-        inventory: JSON.parse(cachedInv),
-        students: JSON.parse(cachedSt),
-        loans: JSON.parse(cachedLn),
-        subjects: JSON.parse(cachedSb),
-        sheetUrl: cachedUrl || ss.getUrl(),
-        fromCache: true
+  
+  // Extraer información de diagnóstico del Inventario
+  let debugInfo = null;
+  const invSheet = ss.getSheetByName("Inventario");
+  if (invSheet) {
+    const v = invSheet.getDataRange().getValues();
+    if (v.length > 0) {
+      const headers = v[0].map(normalizeHeader);
+      const indices = getInventoryHeaderIndices(headers);
+      const sampleRows = [];
+      for (let i = 1; i < Math.min(v.length, 15); i++) {
+        if (!v[i][indices.nameIdx]) continue;
+        const totalNum = parseInt(v[i][indices.totalIdx]) || 0;
+        const rawD = v[i][indices.availableIdx];
+        const dispNum = (rawD === "" || rawD === undefined || rawD === null) ? totalNum : (parseInt(rawD) || 0);
+        sampleRows.push({
+          row: i + 1,
+          name: v[i][indices.nameIdx].toString(),
+          total: totalNum,
+          disponible: dispNum
+        });
+      }
+      debugInfo = {
+        detectedHeaders: v[0],
+        normalizedHeaders: headers,
+        indices: indices,
+        sampleRows: sampleRows
       };
     }
-  } catch (e) {
-    Logger.log("Cache read error, falling back to sheet: " + e.toString());
+  }
+
+  // SIEMPRE leer préstamos en vivo directamente de la hoja de cálculo (no se cachean)
+  const loans = getLoansData(ss);
+
+  if (!isFresh) {
+    try {
+      const cachedInv = cache.get("avp_inv");
+      const cachedSt = cache.get("avp_st");
+      const cachedSb = cache.get("avp_sb");
+      const cachedUrl = cache.get("avp_url");
+      
+      if (cachedInv && cachedSt && cachedSb) {
+        return {
+          status: "success",
+          inventory: JSON.parse(cachedInv),
+          students: JSON.parse(cachedSt),
+          loans: loans, // Préstamos frescos 100% en tiempo real
+          subjects: JSON.parse(cachedSb),
+          sheetUrl: cachedUrl || ss.getUrl(),
+          debugInfo: debugInfo,
+          fromCache: true
+        };
+      }
+    } catch (e) {
+      Logger.log("Cache read error, falling back to sheet: " + e.toString());
+    }
   }
   
   const inventory = getInventoryData(ss);
   const students = getStudentsData(ss);
-  const loans = getLoansData(ss);
   const subjects = getSubjectsData(ss);
   const sheetUrl = ss.getUrl();
   
   try {
     const invStr = JSON.stringify(inventory);
     const stStr = JSON.stringify(students);
-    const lnStr = JSON.stringify(loans);
     const sbStr = JSON.stringify(subjects);
     
     const entries = {};
     if (invStr.length < 95000) entries["avp_inv"] = invStr;
     if (stStr.length < 95000) entries["avp_st"] = stStr;
-    if (lnStr.length < 95000) entries["avp_ln"] = lnStr;
     if (sbStr.length < 95000) entries["avp_sb"] = sbStr;
     entries["avp_url"] = sheetUrl;
     
-    cache.putAll(entries, 600); // 10 minutos de caché
+    cache.putAll(entries, 300); // 5 minutos de caché para inventario y alumnos
   } catch (e) {
     Logger.log("Cache write error: " + e.toString());
   }
@@ -290,9 +329,10 @@ function getCachedInitData(ss) {
     status: "success",
     inventory: inventory,
     students: students,
-    loans: loans,
+    loans: loans, // Préstamos en vivo
     subjects: subjects,
     sheetUrl: sheetUrl,
+    debugInfo: debugInfo,
     fromCache: false
   };
 }
@@ -338,6 +378,9 @@ function doPost(e) {
     }
     else if (action === "removeSanction") {
       responseData = executeRemoveSanction(ss, postData);
+    }
+    else if (action === "sendContactEmail") {
+      responseData = executeSendContactEmail(ss, postData);
     }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
@@ -403,11 +446,18 @@ function getLoanHeaderIndices(headers) {
   const itemIdx = headers.findIndex(h => h.includes("equipo") || h.includes("articulo") || h.includes("item"));
   const codeIdx = headers.findIndex((h, idx) => {
     if (idx === idIdx) return false;
-    return h.includes("codigo") || h.includes("inventario") || h.includes("nº") || h.includes("nro");
+    return h.includes("codigo") || h.includes("inventario") || h.includes("nº") || h.includes("nro") || h.includes("serial");
   });
   
   // Fecha Registro / Solicitud original (reserva)
-  const dateOutIdx = headers.findIndex(h => h.includes("registro") || h.includes("solicitud"));
+  let dateOutIdx = headers.findIndex(h => h.includes("registro") || h.includes("solicitud"));
+  if (dateOutIdx === -1) {
+    dateOutIdx = headers.findIndex(h => {
+      const norm = h.toString().toLowerCase();
+      if (norm.includes("programad") || norm.includes("retiro") || norm.includes("devolucion") || norm.includes("entrega")) return false;
+      return norm.includes("fecha");
+    });
+  }
   
   // Fecha Retiro / Entrega Real (cuando se retira físicamente)
   const dateDeliverIdx = headers.findIndex(h => {
@@ -418,7 +468,13 @@ function getLoanHeaderIndices(headers) {
            (norm.includes("entrega") && !norm.includes("programad") && !norm.includes("previst") && !norm.includes("estimad"));
   });
   
-  const dateInIdx = headers.findIndex(h => h.includes("devolucion") || h.includes("retorno") || h.includes("entrada") || h.includes("fecha de devolucion"));
+  // Fecha Devolución Real (excluyendo programadas y observaciones)
+  const dateInIdx = headers.findIndex(h => {
+    const norm = h.toString().toLowerCase();
+    if (norm.includes("programad") || norm.includes("previst") || norm.includes("estimad") || norm.includes("planificad")) return false;
+    if (norm.includes("observaci") || norm.includes("obs") || norm.includes("nota")) return false;
+    return norm.includes("devolucion") || norm.includes("retorno") || norm.includes("entrada");
+  });
   const statusIdx = headers.findIndex(h => h.includes("estado") || h.includes("status"));
   const progRetiroIdx = headers.findIndex(h => (h.includes("programad") || h.includes("previst") || h.includes("estimad") || h.includes("planificad")) && (h.includes("retiro") || h.includes("salida")));
   const progDevolucionIdx = headers.findIndex(h => (h.includes("programad") || h.includes("previst") || h.includes("estimad") || h.includes("planificad")) && (h.includes("devolucion") || h.includes("retorno")));
@@ -704,23 +760,37 @@ function executeCreateLoan(ss, payload) {
     const updates = [];
     for (let k = 0; k < items.length; k++) {
       const item = items[k];
-      let found = false;
+      let nameMatched = false;
+      let hasStock = false;
+      let currentStock = 0;
+      
+      const cleanSearchName = item.name.toString().trim().toLowerCase();
       
       for (let i = 1; i < invValues.length; i++) {
-        if (invValues[i][invNameIdx].toString() === item.name) {
+        const rowName = invValues[i][invNameIdx] ? invValues[i][invNameIdx].toString().trim().toLowerCase() : "";
+        if (rowName === cleanSearchName) {
+          nameMatched = true;
           const totalVal = parseInt(invValues[i][invTotalIdx]) || 0;
           const rawDisp = invValues[i][invDispIdx];
           const disponible = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+          currentStock = disponible;
           
-          if (disponible <= 0) {
-            continue;
+          if (disponible > 0) {
+            hasStock = true;
+            updates.push({ rowIndex: i + 1, currentDisp: disponible });
+            // Reducir stock temporalmente en memoria para esta transacción si hay duplicados
+            invValues[i][invDispIdx] = disponible - 1;
+            break;
           }
-          updates.push({ rowIndex: i + 1, currentDisp: disponible });
-          found = true;
-          break;
         }
       }
-      if (!found) throw new Error("El equipo '" + item.name + "' no tiene stock disponible en este momento.");
+      
+      if (!nameMatched) {
+        throw new Error("El equipo '" + item.name + "' no se encontró en la pestaña 'Inventario' de Google Sheets. Verifica que el nombre esté escrito exactamente igual en la hoja.");
+      }
+      if (!hasStock) {
+        throw new Error("El equipo '" + item.name + "' no tiene stock disponible en Google Sheets (Disponible: " + currentStock + "). Actualiza la columna 'Disponible' en la hoja 'Inventario' para poder prestarlo.");
+      }
     }
     
     // Descontar stock
@@ -1639,6 +1709,124 @@ function sendAnulacionEmail(studentName, studentEmail, items, timestamp, loanId)
     subject: "Préstamo Anulado - ID: " + loanId,
     htmlBody: htmlBody
   });
+}
+
+function executeSendContactEmail(ss, payload) {
+  try {
+    const studentEmail = payload.studentEmail ? payload.studentEmail.trim() : "";
+    const studentName = payload.studentName ? payload.studentName.trim() : "Estudiante";
+    const loanId = payload.loanId ? payload.loanId.trim() : "Préstamo";
+    const subject = payload.subject ? payload.subject.trim() : ("Notificación Oficial - Pañol AVP UFRO - ID: " + loanId);
+    const message = payload.message ? payload.message.trim() : "";
+    const items = payload.items || [];
+    const progRetiro = payload.progRetiro || "";
+    const progDevolucion = payload.progDevolucion || "";
+    const subjectName = payload.subjectName || "";
+    const loanStatus = payload.loanStatus || "Activo";
+
+    if (!studentEmail) {
+      return { status: "error", message: "El estudiante no tiene un correo electrónico válido registrado." };
+    }
+    if (!message) {
+      return { status: "error", message: "El mensaje no puede estar vacío." };
+    }
+
+    let itemsTableRows = "";
+    if (items.length > 0) {
+      items.forEach(item => {
+        const itemCode = (item.code && item.code.trim() !== "") ? item.code : "Pte. Entrega";
+        itemsTableRows += `
+          <tr style="border-bottom: 1px solid #e2e8f0;">
+            <td style="padding: 10px 12px; color: #1e293b; font-weight: bold;">${item.name}</td>
+            <td style="padding: 10px 12px; color: #0284c7; font-weight: bold; text-align: right;"><code>${itemCode}</code></td>
+          </tr>
+        `;
+      });
+    } else {
+      itemsTableRows = `
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td colspan="2" style="padding: 10px 12px; color: #64748b; text-align: center; font-style: italic;">Sin equipos asociados registrados</td>
+        </tr>
+      `;
+    }
+
+    const formattedMessage = message
+      .split('&').join('&amp;')
+      .split('<').join('&lt;')
+      .split('>').join('&gt;')
+      .split('"').join('&quot;')
+      .split('\n').join('<br>');
+
+    const htmlBody = `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; padding: 30px;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.05); border: 1px solid #e2e8f0;">
+          <div style="background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%); padding: 28px 30px; text-align: center; color: white;">
+            <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px;">Comunicación del Pañol AVP</h1>
+            <p style="margin: 5px 0 0 0; opacity: 0.95; font-size: 13px; font-weight: 500;">Préstamo ID: ${loanId} • Carrera de Periodismo UFRO</p>
+          </div>
+          
+          <div style="padding: 30px;">
+            <p style="font-size: 15px; color: #1e293b; margin-top: 0;">Estimado(a) <strong>${studentName}</strong>,</p>
+            <p style="font-size: 14px; color: #475569; line-height: 1.5; margin-bottom: 18px;">
+              Te contactamos desde el <strong>Pañol Audiovisual (AVP)</strong> en relación al registro de préstamo con identificador <strong>${loanId}</strong>:
+            </p>
+            
+            <div style="background-color: #eff6ff; border-left: 4px solid #0284c7; border-radius: 6px; padding: 16px 20px; margin-bottom: 24px;">
+              <h4 style="margin: 0 0 8px 0; color: #0369a1; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Mensaje de Administración:</h4>
+              <div style="margin: 0; color: #1e3a8a; font-size: 14px; line-height: 1.6;">${formattedMessage}</div>
+            </div>
+
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin-top: 15px;">
+              <h4 style="margin: 0 0 12px 0; color: #475569; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Equipos Comprendidos en el Préstamo:</h4>
+              <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                <thead>
+                  <tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+                    <th style="padding: 8px 0; color: #64748b; font-weight: 700;">Equipo</th>
+                    <th style="padding: 8px 0; color: #64748b; font-weight: 700; text-align: right;">Nº Inventario</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsTableRows}
+                </tbody>
+              </table>
+            </div>
+
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-top: 15px; font-size: 13px;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 5px 0; color: #64748b; width: 45%;"><strong>Estado del Préstamo:</strong></td>
+                  <td style="padding: 5px 0; color: #1e293b; font-weight: bold;">${loanStatus}</td>
+                </tr>
+                ${progRetiro ? `<tr><td style="padding: 5px 0; color: #64748b;"><strong>Fecha Retiro Programada:</strong></td><td style="padding: 5px 0; color: #1e293b; font-weight: bold;">${progRetiro}</td></tr>` : ''}
+                ${progDevolucion ? `<tr><td style="padding: 5px 0; color: #64748b;"><strong>Fecha Devolución Programada:</strong></td><td style="padding: 5px 0; color: #1e293b; font-weight: bold;">${progDevolucion}</td></tr>` : ''}
+                ${subjectName ? `<tr><td style="padding: 5px 0; color: #64748b;"><strong>Asignatura / Cátedra:</strong></td><td style="padding: 5px 0; color: #1e293b; font-weight: bold;">${subjectName}</td></tr>` : ''}
+              </table>
+            </div>
+            
+            <div style="margin-top: 20px; background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 15px; font-size: 13px;">
+              <h4 style="margin: 0 0 5px 0; color: #b45309; font-weight: bold;">Atención y Respuestas:</h4>
+              <p style="margin: 0; color: #92400e; line-height: 1.45;">Si requieres responder a este comunicado o justificar alguna situación particular, puedes responder directamente a este correo o acercarte a la oficina del pañol AVP durante los horarios de atención.</p>
+            </div>
+            
+            <p style="margin-top: 25px; margin-bottom: 0; font-size: 12px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+              Pañol Audiovisual (AVP) • Carrera de Periodismo • Universidad de La Frontera
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    MailApp.sendEmail({
+      to: studentEmail,
+      subject: subject,
+      htmlBody: htmlBody
+    });
+
+    return { status: "success", message: "Correo oficial enviado con éxito a " + studentEmail };
+  } catch (err) {
+    Logger.log("Error al enviar correo de contacto: " + err.toString());
+    return { status: "error", message: "Error al enviar correo: " + err.toString() };
+  }
 }
 
 // ==========================================

@@ -39,6 +39,7 @@ let appState = {
     activeAdminLoanFilter: "all",
     currentDeliveryLoanId: null,
     currentReturnLoanId: null,
+    currentContactLoanId: null,
     tempDeliveryItems: [],
     adminStudentsSearchQuery: ""
 };
@@ -119,6 +120,17 @@ const dom = {
     btnConfirmReturn: document.getElementById('btn-confirm-return'),
     returnItemsContainer: document.getElementById('return-items-container'),
     returnGlobalObs: document.getElementById('return-global-obs'),
+    
+    // Contactar Alumno Modal (Fase 52)
+    contactModal: document.getElementById('contact-modal'),
+    btnCloseContact: document.getElementById('btn-close-contact'),
+    contactLoanSummary: document.getElementById('contact-loan-summary'),
+    contactTemplateSelect: document.getElementById('contact-template-select'),
+    contactEmailInput: document.getElementById('contact-email-input'),
+    contactSubjectInput: document.getElementById('contact-subject-input'),
+    contactMessageInput: document.getElementById('contact-message-input'),
+    btnSendContactEmail: document.getElementById('btn-send-contact-email'),
+    btnContactWhatsappLink: document.getElementById('btn-contact-whatsapp-link'),
     
     // Métricas
     metricTotalEquipos: document.getElementById('metric-total-equipos'),
@@ -679,6 +691,24 @@ function initEventListeners() {
     dom.btnCloseReturn.addEventListener('click', () => {
         dom.returnModal.classList.add('hidden');
     });
+    
+    if (dom.btnCloseContact) {
+        dom.btnCloseContact.addEventListener('click', () => {
+            if (dom.contactModal) dom.contactModal.classList.add('hidden');
+        });
+    }
+    
+    if (dom.contactTemplateSelect) {
+        dom.contactTemplateSelect.addEventListener('change', (e) => {
+            applyContactTemplate(e.target.value);
+        });
+    }
+    
+    if (dom.btnSendContactEmail) {
+        dom.btnSendContactEmail.addEventListener('click', () => {
+            executeSendContactEmailApi();
+        });
+    }
     
     dom.adminLoginForm.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -2003,6 +2033,207 @@ async function executeCancelApi(loanId) {
 }
 
 // ==========================================
+// CONTACTO / NOTIFICACIÓN OFICIAL A ALUMNOS (FASE 52)
+// ==========================================
+
+function openContactModal(loanId) {
+    appState.currentContactLoanId = loanId;
+    const loanGroup = groupLoansById(appState.loans).find(l => l.id === loanId);
+    if (!loanGroup) {
+        showToast("No se encontró la información del préstamo.", "danger");
+        return;
+    }
+    
+    // Buscar datos del estudiante en catálogo para complementar teléfono y correo
+    const cleanLoanRut = (loanGroup.rut || "").replace(/[^0-9kK]/g, '').toLowerCase();
+    const studentDb = appState.students.find(s => (s.rut || "").replace(/[^0-9kK]/g, '').toLowerCase() === cleanLoanRut);
+    
+    const targetEmail = loanGroup.email || (studentDb ? studentDb.email : "");
+    const targetFono = studentDb ? studentDb.fono : "";
+    
+    if (dom.contactLoanSummary) {
+        const itemsSummary = loanGroup.items.map(it => `• ${it.name} (${it.code || 'Pte. Entrega'})`).join('<br>');
+        dom.contactLoanSummary.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e2e8f0; padding-bottom:6px; margin-bottom:6px;">
+                <span style="font-weight:800; color:var(--text-primary); font-size:0.95rem;">ID: ${loanGroup.id}</span>
+                <span class="table-badge ${loanGroup.status.toLowerCase()}">${loanGroup.status}</span>
+            </div>
+            <div><strong>Alumno:</strong> ${loanGroup.name} <code>${loanGroup.rut}</code></div>
+            <div style="margin-top:2px;"><strong>Equipos:</strong><br><small style="color:var(--text-secondary); line-height:1.4; display:block; padding-left:4px;">${itemsSummary}</small></div>
+            ${loanGroup.subject ? `<div><strong>Asignatura:</strong> ${loanGroup.subject}</div>` : ''}
+            ${loanGroup.progRetiro ? `<div><strong>Retiro Solicitado:</strong> ${formatDisplayDate(loanGroup.progRetiro)}</div>` : ''}
+            ${loanGroup.progDevolucion ? `<div><strong>Devolución Prevista:</strong> ${formatDisplayDate(loanGroup.progDevolucion)}</div>` : ''}
+        `;
+    }
+    
+    if (dom.contactEmailInput) {
+        dom.contactEmailInput.value = targetEmail || "";
+    }
+    
+    // Auto-seleccionar la plantilla según estado y atraso
+    let initialTemplate = "recordatorio";
+    if (loanGroup.status === "Solicitado") {
+        initialTemplate = "retiro";
+    } else if (loanGroup.status === "Devuelto" || loanGroup.status === "Anulado") {
+        initialTemplate = "accesorio";
+    } else if (loanGroup.status === "Retirado") {
+        const overdue = getDaysOverdue(loanGroup);
+        if (overdue > 0) {
+            initialTemplate = "urgente";
+        } else {
+            initialTemplate = "recordatorio";
+        }
+    }
+    
+    if (dom.contactTemplateSelect) {
+        dom.contactTemplateSelect.value = initialTemplate;
+    }
+    applyContactTemplate(initialTemplate, loanGroup);
+    
+    // Configurar botón WhatsApp si hay teléfono
+    if (dom.btnContactWhatsappLink) {
+        if (targetFono && targetFono.trim() !== "") {
+            const cleanPhone = targetFono.replace(/[^0-9]/g, '');
+            let finalPhone = cleanPhone;
+            if (cleanPhone.length === 9) {
+                finalPhone = "56" + cleanPhone;
+            } else if (cleanPhone.length === 8) {
+                finalPhone = "569" + cleanPhone;
+            }
+            const defaultMsg = encodeURIComponent(`Hola ${loanGroup.name}, te contactamos desde el Pañol Audiovisual (AVP) de Periodismo UFRO en relación a tu préstamo ID ${loanGroup.id}.`);
+            dom.btnContactWhatsappLink.href = `https://wa.me/${finalPhone}?text=${defaultMsg}`;
+            dom.btnContactWhatsappLink.classList.remove('hidden');
+        } else {
+            dom.btnContactWhatsappLink.classList.add('hidden');
+        }
+    }
+    
+    if (dom.contactModal) {
+        dom.contactModal.classList.remove('hidden');
+        lucide.createIcons();
+    }
+}
+
+function applyContactTemplate(templateKey, loan = null) {
+    if (!loan && appState.currentContactLoanId) {
+        loan = groupLoansById(appState.loans).find(l => l.id === appState.currentContactLoanId);
+    }
+    if (!loan) return;
+    
+    const loanId = loan.id;
+    const studentName = loan.name;
+    const itemsList = loan.items.map(it => it.name).join(', ');
+    
+    let subject = "";
+    let message = "";
+    
+    switch (templateKey) {
+        case "recordatorio":
+            subject = `Recordatorio de Devolución de Equipos - Préstamo ID: ${loanId}`;
+            message = `Hola ${studentName},\n\nTe recordamos que tu préstamo de equipos AVP UFRO (${itemsList}) está próximo a vencer o requiere ser devuelto al pañol audiovisual.\n\nPor favor acércate a la brevedad dentro del horario de atención para verificar y reingresar los equipos al stock activo.`;
+            break;
+        case "retiro":
+            subject = `Aviso de Retiro Pendiente - Solicitud ID: ${loanId}`;
+            message = `Hola ${studentName},\n\nTu solicitud de equipos (${itemsList}) se encuentra lista en el pañol audiovisual para su retiro físico.\n\nRecuerda que cuentas con un plazo máximo de 12 horas desde la solicitud para retirar los equipos, de lo contrario la reserva se anulará automáticamente para liberar el inventario a otros estudiantes.`;
+            break;
+        case "accesorio":
+            subject = `Observación sobre Devolución de Equipos - Préstamo ID: ${loanId}`;
+            message = `Hola ${studentName},\n\nTe escribimos tras la recepción y chequeo técnico de los equipos correspondientes a tu préstamo ${loanId}.\n\nSe detectó un detalle o accesorio pendiente de entrega (ej. tapa de lente, cable, cargador, batería o bolso). Por favor acércate o comunícate con nosotros para regularizarlo.`;
+            break;
+        case "urgente":
+            subject = `URGENTE: Devolución Pendiente de Equipos AVP - Préstamo ID: ${loanId}`;
+            message = `Estimado(a) ${studentName},\n\nNos comunicamos de forma urgente debido a que tu préstamo ${loanId} registra días de atraso en la devolución de los equipos (${itemsList}).\n\nTe solicitamos presentarte de inmediato en el pañol AVP para devolver los equipos y evitar sanciones académicas o bloqueos de cuenta de acuerdo al reglamento institucional.`;
+            break;
+        case "personalizado":
+            subject = `Comunicación del Pañol AVP UFRO - Préstamo ID: ${loanId}`;
+            message = `Estimado(a) ${studentName},\n\n`;
+            break;
+    }
+    
+    if (dom.contactSubjectInput) dom.contactSubjectInput.value = subject;
+    if (dom.contactMessageInput) dom.contactMessageInput.value = message;
+}
+
+async function executeSendContactEmailApi() {
+    const loanId = appState.currentContactLoanId;
+    if (!loanId) return;
+    
+    const loanGroup = groupLoansById(appState.loans).find(l => l.id === loanId);
+    if (!loanGroup) return;
+    
+    const targetEmail = dom.contactEmailInput ? dom.contactEmailInput.value.trim() : "";
+    const subject = dom.contactSubjectInput ? dom.contactSubjectInput.value.trim() : "";
+    const message = dom.contactMessageInput ? dom.contactMessageInput.value.trim() : "";
+    
+    if (!targetEmail || !targetEmail.includes('@')) {
+        showToast("Por favor ingresa un correo electrónico de destino válido.", "warning");
+        if (dom.contactEmailInput) dom.contactEmailInput.focus();
+        return;
+    }
+    if (!message) {
+        showToast("Por favor redacta un mensaje para el estudiante.", "warning");
+        if (dom.contactMessageInput) dom.contactMessageInput.focus();
+        return;
+    }
+    
+    const originalBtnText = dom.btnSendContactEmail.innerHTML;
+    dom.btnSendContactEmail.disabled = true;
+    dom.btnSendContactEmail.innerHTML = `<i data-lucide="loader-2" class="spin"></i> Enviando correo...`;
+    lucide.createIcons();
+    
+    const payload = {
+        loanId: loanGroup.id,
+        studentName: loanGroup.name,
+        studentEmail: targetEmail,
+        subject: subject || `Notificación Oficial - Pañol AVP UFRO - ID: ${loanGroup.id}`,
+        message: message,
+        items: loanGroup.items.map(it => ({ name: it.name, code: it.code || 'Pte. Entrega' })),
+        progRetiro: loanGroup.progRetiro || "",
+        progDevolucion: loanGroup.progDevolucion || "",
+        subjectName: loanGroup.subject || "",
+        loanStatus: loanGroup.status || "Activo",
+        timestamp: getNowFormatted()
+    };
+    
+    if (CONFIG.demoMode) {
+        console.log(`[SIMULACIÓN GMAIL - CONTACTO VOUCHER] Enviando correo a ${targetEmail}:`, payload);
+        setTimeout(() => {
+            showToast(`Correo oficial enviado con éxito a ${targetEmail} (Simulado en modo Demo)`, "success");
+            dom.btnSendContactEmail.disabled = false;
+            dom.btnSendContactEmail.innerHTML = originalBtnText;
+            if (dom.contactModal) dom.contactModal.classList.add('hidden');
+            lucide.createIcons();
+        }, 500);
+        return;
+    }
+    
+    try {
+        showToast("Enviando correo oficial con formato voucher...", "info");
+        const response = await fetch(`${CONFIG.scriptUrl}?action=sendContactEmail`, {
+            method: 'POST',
+            mode: 'cors',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify(payload)
+        });
+        
+        const data = await response.json();
+        if (data.status === "success") {
+            showToast(data.message || `Correo oficial enviado con éxito a ${targetEmail}`, "success");
+            if (dom.contactModal) dom.contactModal.classList.add('hidden');
+        } else {
+            showToast(data.message || "Error al enviar el correo.", "danger");
+        }
+    } catch (err) {
+        console.error("Error al enviar correo de contacto:", err);
+        showToast(`Error de conexión al enviar correo: ${err.message || 'Error de red.'}`, "danger");
+    } finally {
+        dom.btnSendContactEmail.disabled = false;
+        dom.btnSendContactEmail.innerHTML = originalBtnText;
+        lucide.createIcons();
+    }
+}
+
+// ==========================================
 // PANEL DE ADMINISTRACIÓN Y SUBTABS
 // ==========================================
 
@@ -2119,9 +2350,12 @@ function renderAdminLoans(filter = "all") {
         let actionBtn = '-';
         if (loan.status === 'Solicitado') {
             actionBtn = `
-                <div class="action-buttons-cell" style="display:flex; gap:8px; justify-content:center;">
+                <div class="action-buttons-cell" style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap;">
                     <button class="btn btn-primary btn-icon-only btn-deliver-loan" data-loan-id="${loan.id}" title="Confirmar Retiro Físico">
                         <i data-lucide="check-square"></i> Entregar
+                    </button>
+                    <button class="btn btn-info btn-icon-only btn-contact-loan" data-loan-id="${loan.id}" title="Enviar Correo / Contactar Alumno">
+                        <i data-lucide="mail"></i> Contactar
                     </button>
                     <button class="btn btn-danger btn-icon-only btn-cancel-loan" data-loan-id="${loan.id}" title="Anular Solicitud">
                         <i data-lucide="x-circle"></i> Anular
@@ -2130,12 +2364,23 @@ function renderAdminLoans(filter = "all") {
             `;
         } else if (loan.status === 'Retirado') {
             actionBtn = `
-                <div class="action-buttons-cell" style="display:flex; gap:8px; justify-content:center;">
+                <div class="action-buttons-cell" style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap;">
                     <button class="btn btn-success btn-icon-only btn-return-loan" data-loan-id="${loan.id}" title="Registrar Devolución">
                         <i data-lucide="rotate-ccw"></i> Devolver
                     </button>
+                    <button class="btn btn-info btn-icon-only btn-contact-loan" data-loan-id="${loan.id}" title="Enviar Correo / Contactar Alumno">
+                        <i data-lucide="mail"></i> Contactar
+                    </button>
                     <button class="btn btn-danger btn-icon-only btn-cancel-loan" data-loan-id="${loan.id}" title="Anular Préstamo">
                         <i data-lucide="x-circle"></i> Anular
+                    </button>
+                </div>
+            `;
+        } else {
+            actionBtn = `
+                <div class="action-buttons-cell" style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap;">
+                    <button class="btn btn-info btn-icon-only btn-contact-loan" data-loan-id="${loan.id}" title="Enviar Correo / Contactar Alumno">
+                        <i data-lucide="mail"></i> Contactar
                     </button>
                 </div>
             `;
@@ -2148,7 +2393,14 @@ function renderAdminLoans(filter = "all") {
         row.innerHTML = `
             <td><strong>${loan.id}</strong></td>
             <td><code>${loan.rut}</code></td>
-            <td>${loan.name}</td>
+            <td>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span>${loan.name}</span>
+                    <button class="btn-icon-subtle btn-contact-loan" data-loan-id="${loan.id}" title="Contactar a ${loan.name}" style="background:none; border:none; color:var(--primary); cursor:pointer; padding:2px; display:inline-flex; align-items:center; opacity:0.75; transition:opacity 0.2s;">
+                        <i data-lucide="mail" style="width:13px; height:13px;"></i>
+                    </button>
+                </div>
+            </td>
             <td>
                 <div class="loan-items-list">
                     ${loan.items.map(it => `<span class="loan-item-entry">• ${it.name}</span>`).join('')}
@@ -2296,6 +2548,13 @@ function renderAdminLoans(filter = "all") {
                 processCancelLoan(id);
             });
         }
+        
+        row.querySelectorAll('.btn-contact-loan').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.getAttribute('data-loan-id');
+                openContactModal(id);
+            });
+        });
         
         dom.adminLoansTableBody.appendChild(row);
     });

@@ -447,6 +447,16 @@ input:checked + .slider:before {
     filter: brightness(1.05);
 }
 
+.btn-info {
+    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+    border: none;
+}
+.btn-info:hover {
+    filter: brightness(1.08);
+}
+
 .btn-icon-only {
     padding: 10px;
     border-radius: var(--border-radius-md);
