@@ -2350,12 +2350,9 @@ function renderAdminLoans(filter = "all") {
         let actionBtn = '-';
         if (loan.status === 'Solicitado') {
             actionBtn = `
-                <div class="action-buttons-cell" style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap;">
+                <div class="action-buttons-cell" style="display:flex; gap:8px; justify-content:center;">
                     <button class="btn btn-primary btn-icon-only btn-deliver-loan" data-loan-id="${loan.id}" title="Confirmar Retiro Físico">
                         <i data-lucide="check-square"></i> Entregar
-                    </button>
-                    <button class="btn btn-info btn-icon-only btn-contact-loan" data-loan-id="${loan.id}" title="Enviar Correo / Contactar Alumno">
-                        <i data-lucide="mail"></i> Contactar
                     </button>
                     <button class="btn btn-danger btn-icon-only btn-cancel-loan" data-loan-id="${loan.id}" title="Anular Solicitud">
                         <i data-lucide="x-circle"></i> Anular
@@ -2364,23 +2361,12 @@ function renderAdminLoans(filter = "all") {
             `;
         } else if (loan.status === 'Retirado') {
             actionBtn = `
-                <div class="action-buttons-cell" style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap;">
+                <div class="action-buttons-cell" style="display:flex; gap:8px; justify-content:center;">
                     <button class="btn btn-success btn-icon-only btn-return-loan" data-loan-id="${loan.id}" title="Registrar Devolución">
                         <i data-lucide="rotate-ccw"></i> Devolver
                     </button>
-                    <button class="btn btn-info btn-icon-only btn-contact-loan" data-loan-id="${loan.id}" title="Enviar Correo / Contactar Alumno">
-                        <i data-lucide="mail"></i> Contactar
-                    </button>
                     <button class="btn btn-danger btn-icon-only btn-cancel-loan" data-loan-id="${loan.id}" title="Anular Préstamo">
                         <i data-lucide="x-circle"></i> Anular
-                    </button>
-                </div>
-            `;
-        } else {
-            actionBtn = `
-                <div class="action-buttons-cell" style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap;">
-                    <button class="btn btn-info btn-icon-only btn-contact-loan" data-loan-id="${loan.id}" title="Enviar Correo / Contactar Alumno">
-                        <i data-lucide="mail"></i> Contactar
                     </button>
                 </div>
             `;
@@ -2394,10 +2380,10 @@ function renderAdminLoans(filter = "all") {
             <td><strong>${loan.id}</strong></td>
             <td><code>${loan.rut}</code></td>
             <td>
-                <div style="display:flex; align-items:center; gap:6px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
                     <span>${loan.name}</span>
-                    <button class="btn-icon-subtle btn-contact-loan" data-loan-id="${loan.id}" title="Contactar a ${loan.name}" style="background:none; border:none; color:var(--primary); cursor:pointer; padding:2px; display:inline-flex; align-items:center; opacity:0.75; transition:opacity 0.2s;">
-                        <i data-lucide="mail" style="width:13px; height:13px;"></i>
+                    <button class="btn-icon-subtle btn-contact-loan" data-loan-id="${loan.id}" title="Contactar a ${loan.name} (${loan.email || ''})" style="background:rgba(2, 132, 199, 0.08); border:1px solid rgba(2, 132, 199, 0.25); border-radius:6px; color:#0284c7; cursor:pointer; padding:3px 6px; display:inline-flex; align-items:center; gap:3px; font-size:0.7rem; font-weight:600; flex-shrink:0; transition:all 0.2s;">
+                        <i data-lucide="mail" style="width:12px; height:12px;"></i>
                     </button>
                 </div>
             </td>
