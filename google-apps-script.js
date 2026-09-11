@@ -129,6 +129,23 @@ function autoUpgradeHeaders(ss) {
       }
     }
   }
+
+  const studentSheet = ss.getSheetByName("Alumnos");
+  if (studentSheet) {
+    const values = studentSheet.getDataRange().getValues();
+    if (values.length > 0) {
+      const currentHeaders = values[0].map(h => h.toString().trim().toLowerCase());
+      const hasBlockDate = currentHeaders.some(h => {
+        const norm = h.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+        return norm.includes("bloqueo") || norm.includes("sancion");
+      });
+      if (!hasBlockDate) {
+        const lastCol = studentSheet.getLastColumn();
+        studentSheet.getRange(1, lastCol + 1, 1, 1).setValue("Fecha Bloqueo");
+        SpreadsheetApp.flush();
+      }
+    }
+  }
 }
 
 // ==========================================
@@ -447,8 +464,12 @@ function getStudentHeaderIndices(headers) {
   const lastnameIdx = headers.findIndex(h => h.includes("apellido") || h.includes("apellidos"));
   const fonoIdx = headers.findIndex(h => h.includes("fono") || h.includes("telefono") || h.includes("celular") || h.includes("movil") || h.includes("contacto"));
   const emailIdx = headers.findIndex(h => h.includes("email") || h.includes("e-mail") || h.includes("correo") || h.includes("mail"));
-  const obsIdx = headers.findIndex(h => h.includes("observacio") || h.includes("deuda") || h.includes("bloqueo") || h.includes("comentario") || h.includes("detalle"));
-  return { rutIdx, nameIdx, lastnameIdx, fonoIdx, emailIdx, obsIdx };
+  const blockDateIdx = headers.findIndex(h => (h.includes("fecha") && (h.includes("bloqueo") || h.includes("sancion"))) || h.includes("bloqueado el") || h.includes("bloqueado desde") || h.includes("fecha bloqueo"));
+  const obsIdx = headers.findIndex((h, idx) => {
+    if (idx === blockDateIdx) return false;
+    return h.includes("observacio") || h.includes("deuda") || h.includes("bloqueo") || h.includes("comentario") || h.includes("detalle");
+  });
+  return { rutIdx, nameIdx, lastnameIdx, fonoIdx, emailIdx, obsIdx, blockDateIdx };
 }
 
 function getLoanHeaderIndices(headers) {
@@ -613,7 +634,7 @@ function getStudentsData(ss) {
   if (values.length <= 1) return [];
   
   const headers = values[0].map(normalizeHeader);
-  const { rutIdx, nameIdx, lastnameIdx, fonoIdx, emailIdx, obsIdx } = getStudentHeaderIndices(headers);
+  const { rutIdx, nameIdx, lastnameIdx, fonoIdx, emailIdx, obsIdx, blockDateIdx } = getStudentHeaderIndices(headers);
   
   if (rutIdx === -1 || nameIdx === -1 || lastnameIdx === -1 || emailIdx === -1) {
     throw new Error("Pestaña 'Alumnos' requiere columnas de: Rut, Nombre, Apellido y E-mail.");
@@ -627,6 +648,16 @@ function getStudentsData(ss) {
     const obs = obsIdx !== -1 && row[obsIdx] ? row[obsIdx].toString().trim() : "";
     const isBlocked = obs !== "";
     
+    let blockDate = "";
+    if (blockDateIdx !== -1 && row[blockDateIdx]) {
+      const rawDate = row[blockDateIdx];
+      if (rawDate instanceof Date) {
+        blockDate = Utilities.formatDate(rawDate, Session.getScriptTimeZone() || "America/Santiago", "yyyy-MM-dd HH:mm:ss");
+      } else {
+        blockDate = rawDate.toString().trim();
+      }
+    }
+    
     students.push({
       rut: row[rutIdx].toString(),
       name: row[nameIdx].toString(),
@@ -634,7 +665,8 @@ function getStudentsData(ss) {
       fono: fonoIdx !== -1 ? row[fonoIdx].toString() : "",
       email: row[emailIdx].toString(),
       status: isBlocked ? "Bloqueado" : "Activo",
-      debt: obs
+      debt: obs,
+      blockDate: isBlocked ? blockDate : ""
     });
   }
   return students;
@@ -1433,7 +1465,7 @@ function executeAddStudent(ss, payload) {
     const sheet = ss.getSheetByName("Alumnos");
     const values = sheet.getDataRange().getValues();
     const headers = values[0].map(normalizeHeader);
-    const { rutIdx, nameIdx, lastnameIdx, fonoIdx, emailIdx, obsIdx } = getStudentHeaderIndices(headers);
+    const { rutIdx, nameIdx, lastnameIdx, fonoIdx, emailIdx, obsIdx, blockDateIdx } = getStudentHeaderIndices(headers);
     
     const cleanSearch = payload.rut.replace(/[^0-9kK]/g, '').toLowerCase();
     for (let i = 1; i < values.length; i++) {
@@ -1450,6 +1482,11 @@ function executeAddStudent(ss, payload) {
     if (fonoIdx !== -1) newRow[fonoIdx] = payload.fono;
     if (emailIdx !== -1) newRow[emailIdx] = payload.email;
     if (obsIdx !== -1) newRow[obsIdx] = payload.status === "Bloqueado" ? payload.debt : "";
+    if (blockDateIdx !== -1) {
+      const now = new Date();
+      const defaultDate = Utilities.formatDate(now, Session.getScriptTimeZone() || "America/Santiago", "yyyy-MM-dd HH:mm:ss");
+      newRow[blockDateIdx] = payload.status === "Bloqueado" ? (payload.blockDate || defaultDate) : "";
+    }
     
     sheet.appendRow(newRow);
     return { status: "success", message: "Alumno guardado." };
@@ -1490,7 +1527,7 @@ function executeApplySanction(ss, payload) {
     const sheet = ss.getSheetByName("Alumnos");
     const values = sheet.getDataRange().getValues();
     const headers = values[0].map(normalizeHeader);
-    const { rutIdx, obsIdx } = getStudentHeaderIndices(headers);
+    const { rutIdx, obsIdx, blockDateIdx } = getStudentHeaderIndices(headers);
     
     if (rutIdx === -1 || obsIdx === -1) {
       throw new Error("No se encontraron las columnas de RUT u Observaciones en la pestaña Alumnos.");
@@ -1511,6 +1548,13 @@ function executeApplySanction(ss, payload) {
     
     const reasonText = payload.reason ? payload.reason.trim() : "Sancionado por el administrador";
     sheet.getRange(rowIndex, obsIdx + 1).setValue(reasonText);
+    
+    if (blockDateIdx !== -1) {
+      const now = new Date();
+      const dateStr = payload.date || Utilities.formatDate(now, Session.getScriptTimeZone() || "America/Santiago", "yyyy-MM-dd HH:mm:ss");
+      sheet.getRange(rowIndex, blockDateIdx + 1).setValue(dateStr);
+    }
+    
     SpreadsheetApp.flush();
     return { status: "success", message: "Alumno bloqueado con éxito." };
   } catch (error) {
@@ -1530,7 +1574,7 @@ function executeRemoveSanction(ss, payload) {
     const sheet = ss.getSheetByName("Alumnos");
     const values = sheet.getDataRange().getValues();
     const headers = values[0].map(normalizeHeader);
-    const { rutIdx, obsIdx } = getStudentHeaderIndices(headers);
+    const { rutIdx, obsIdx, blockDateIdx } = getStudentHeaderIndices(headers);
     
     if (rutIdx === -1 || obsIdx === -1) {
       throw new Error("No se encontraron las columnas de RUT u Observaciones en la pestaña Alumnos.");
@@ -1550,6 +1594,10 @@ function executeRemoveSanction(ss, payload) {
     if (rowIndex === -1) throw new Error("Alumno no encontrado.");
     
     sheet.getRange(rowIndex, obsIdx + 1).setValue("");
+    if (blockDateIdx !== -1) {
+      sheet.getRange(rowIndex, blockDateIdx + 1).setValue("");
+    }
+    
     SpreadsheetApp.flush();
     return { status: "success", message: "Bloqueo levantado. Alumno ahora está Activo." };
   } catch (error) {

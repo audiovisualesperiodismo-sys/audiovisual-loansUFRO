@@ -42,7 +42,8 @@ let appState = {
     currentReturnLoanId: null,
     currentContactLoanId: null,
     tempDeliveryItems: [],
-    adminStudentsSearchQuery: ""
+    adminStudentsSearchQuery: "",
+    adminStudentsFilter: "all"
 };
 
 // Referencias DOM
@@ -93,6 +94,8 @@ const dom = {
     formAddStudent: document.getElementById('form-add-student'),
     stStatusSelect: document.getElementById('st-status'),
     stDebtGroup: document.getElementById('st-debt-group'),
+    stBlockDateGroup: document.getElementById('st-block-date-group'),
+    stBlockDate: document.getElementById('st-block-date'),
     adminEquipmentList: document.getElementById('admin-equipment-list'),
     adminStudentsList: document.getElementById('admin-students-list'),
     adminStudentsSearch: document.getElementById('admin-students-search'),
@@ -593,11 +596,31 @@ function initEventListeners() {
     dom.stStatusSelect.addEventListener('change', (e) => {
         if (e.target.value === 'Bloqueado') {
             dom.stDebtGroup.classList.remove('hidden');
+            if (dom.stBlockDateGroup) {
+                dom.stBlockDateGroup.classList.remove('hidden');
+                if (dom.stBlockDate && !dom.stBlockDate.value) {
+                    dom.stBlockDate.value = new Date().toISOString().split('T')[0];
+                }
+            }
             document.getElementById('st-debt').required = true;
         } else {
             dom.stDebtGroup.classList.add('hidden');
+            if (dom.stBlockDateGroup) {
+                dom.stBlockDateGroup.classList.add('hidden');
+                if (dom.stBlockDate) dom.stBlockDate.value = '';
+            }
             document.getElementById('st-debt').required = false;
         }
+    });
+    
+    document.querySelectorAll('.btn-student-filter').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const filter = e.currentTarget.getAttribute('data-student-filter');
+            appState.adminStudentsFilter = filter;
+            document.querySelectorAll('.btn-student-filter').forEach(b => b.classList.remove('active'));
+            e.currentTarget.classList.add('active');
+            renderAdminStudentsList();
+        });
     });
     
     if (dom.studentValidationForm) {
@@ -3026,26 +3049,118 @@ function renderAdminEquipmentList() {
     lucide.createIcons();
 }
 
+function isStudentBlocked(student) {
+    if (!student) return false;
+    return student.status === 'Bloqueado' || (student.debt && student.debt.trim() !== "");
+}
+
+function getStudentDaysBlocked(student) {
+    if (!isStudentBlocked(student)) return 0;
+    
+    // 1. Si tiene fecha registrada explícita de bloqueo
+    if (student.blockDate) {
+        const d = parseDateString(student.blockDate);
+        if (d) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            d.setHours(0, 0, 0, 0);
+            const diffTime = today - d;
+            return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+        }
+    }
+    
+    // 2. Si la observación contiene una fecha legible (YYYY-MM-DD o DD/MM/YYYY)
+    if (student.debt) {
+        const match = student.debt.match(/(\d{4}-\d{2}-\d{2})/) || student.debt.match(/(\d{2}\/\d{2}\/\d{4})/);
+        if (match) {
+            const d = parseDateString(match[1]);
+            if (d) {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                d.setHours(0, 0, 0, 0);
+                const diffTime = today - d;
+                return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+            }
+        }
+    }
+    
+    // 3. Si tiene préstamos con atraso activo
+    if (typeof checkStudentOverdueLoans === 'function' && student.rut) {
+        const overdue = checkStudentOverdueLoans(student.rut);
+        if (overdue && overdue.length > 0) {
+            let maxDays = 0;
+            overdue.forEach(o => {
+                if (o.days > maxDays) maxDays = o.days;
+            });
+            if (maxDays > 0) return maxDays;
+        }
+    }
+    
+    return 0; // Bloqueado hoy o sin fecha
+}
+
 function renderAdminStudentsList() {
     dom.adminStudentsList.innerHTML = '';
-    if (appState.students.length === 0) {
+    
+    const totalCount = appState.students.length;
+    const blockedCount = appState.students.filter(isStudentBlocked).length;
+    const activeCount = totalCount - blockedCount;
+    
+    const countAllEl = document.getElementById('count-students-all');
+    const countBlockedEl = document.getElementById('count-students-blocked');
+    const countActiveEl = document.getElementById('count-students-active');
+    if (countAllEl) countAllEl.textContent = totalCount;
+    if (countBlockedEl) countBlockedEl.textContent = blockedCount;
+    if (countActiveEl) countActiveEl.textContent = activeCount;
+    
+    // Reflejar botón activo en la barra de filtros
+    document.querySelectorAll('.btn-student-filter').forEach(btn => {
+        if (btn.getAttribute('data-student-filter') === appState.adminStudentsFilter) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    if (totalCount === 0) {
         dom.adminStudentsList.innerHTML = '<li class="table-empty"><p>No hay estudiantes registrados.</p></li>';
         return;
     }
     
     let filteredStudents = appState.students;
+    
+    // Filtrar por pestaña (Todos / Bloqueados / Activos)
+    if (appState.adminStudentsFilter === 'blocked') {
+        filteredStudents = filteredStudents.filter(isStudentBlocked);
+    } else if (appState.adminStudentsFilter === 'active') {
+        filteredStudents = filteredStudents.filter(s => !isStudentBlocked(s));
+    }
+    
+    // Filtrar por texto de búsqueda (nombre, apellido, rut o motivo)
     if (appState.adminStudentsSearchQuery) {
         const query = appState.adminStudentsSearchQuery.toLowerCase();
-        filteredStudents = appState.students.filter(student => {
+        filteredStudents = filteredStudents.filter(student => {
             const fullName = `${student.name} ${student.lastname || ""}`.toLowerCase();
             const rut = student.rut.replace(/[^0-9kK]/g, '').toLowerCase();
             const rawRut = student.rut.toLowerCase();
-            return fullName.includes(query) || rut.includes(query) || rawRut.includes(query);
+            const debt = (student.debt || '').toLowerCase();
+            return fullName.includes(query) || rut.includes(query) || rawRut.includes(query) || debt.includes(query);
         });
     }
     
     if (filteredStudents.length === 0) {
-        dom.adminStudentsList.innerHTML = '<li class="table-empty"><p>No se encontraron alumnos que coincidan con la búsqueda.</p></li>';
+        if (appState.adminStudentsFilter === 'blocked') {
+            dom.adminStudentsList.innerHTML = `
+                <li class="table-empty" style="padding: 24px 16px; text-align: center;">
+                    <i data-lucide="check-circle" style="width: 32px; height: 32px; color: var(--success); margin: 0 auto 8px auto; display: block;"></i>
+                    <p style="font-weight: 700; color: var(--text-primary); margin-bottom: 2px;">¡No hay alumnos bloqueados!</p>
+                    <small style="color: var(--text-secondary);">Todos los estudiantes se encuentran actualmente en condición regular y habilitados para préstamos.</small>
+                </li>
+            `;
+        } else {
+            dom.adminStudentsList.innerHTML = '<li class="table-empty"><p>No se encontraron alumnos que coincidan con la búsqueda o filtro.</p></li>';
+        }
+        lucide.createIcons();
         return;
     }
     
@@ -3053,26 +3168,46 @@ function renderAdminStudentsList() {
         const li = document.createElement('li');
         li.className = 'admin-list-item';
         
-        // Determinar estado UFRO (si observaciones/debt no está vacío)
-        const isBlocked = student.status === 'Bloqueado' || (student.debt && student.debt.trim() !== "");
-        const badgeColor = isBlocked ? 'color: var(--danger); font-weight:700;' : 'color: var(--success); font-weight:700;';
+        const isBlocked = isStudentBlocked(student);
         const displayStatus = isBlocked ? 'Bloqueado' : 'Activo';
+        const daysBlocked = isBlocked ? getStudentDaysBlocked(student) : 0;
+        
+        let daysBadgeHtml = '';
+        if (isBlocked) {
+            let label = `${daysBlocked} d bloqueado`;
+            if (daysBlocked === 0) label = 'Bloqueado hoy (0 d)';
+            else if (daysBlocked === 1) label = '1 día bloqueado';
+            
+            daysBadgeHtml = `
+                <span class="badge-days-blocked" title="Tiempo que lleva con sanción activa">
+                    <i data-lucide="clock" style="width: 11px; height: 11px;"></i> ${label}
+                </span>
+            `;
+        }
         
         li.innerHTML = `
             <div class="admin-item-info">
-                <h5>${student.name} ${student.lastname || ""}</h5>
-                <p>RUT: ${student.rut} | Fono: ${student.fono || '-'}</p>
-                <small style="${badgeColor}">Estado: ${displayStatus} ${isBlocked ? `(${student.debt})` : ''}</small>
+                <h5 style="font-size: 0.9rem; font-weight: 700; color: var(--text-primary); margin: 0 0 2px 0;">${student.name} ${student.lastname || ""}</h5>
+                <p style="font-size: 0.78rem; color: var(--text-secondary); margin: 0;">RUT: <code>${student.rut}</code> | Fono: ${student.fono || '-'}</p>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 5px;">
+                    <span class="table-badge ${isBlocked ? 'danger' : 'success'}" style="${isBlocked ? 'background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25); font-weight: 700; font-size: 0.72rem; padding: 2px 7px;' : 'background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.25); font-weight: 700; font-size: 0.72rem; padding: 2px 7px;'}">
+                        <i data-lucide="${isBlocked ? 'lock' : 'check'}" style="width: 11px; height: 11px; margin-right: 2px;"></i> ${displayStatus}
+                    </span>
+                    ${daysBadgeHtml}
+                    ${isBlocked && student.blockDate ? `<small style="color: var(--text-secondary); font-size: 0.7rem;">(Desde: ${formatDisplayDate(student.blockDate).split(' ')[0]})</small>` : ''}
+                </div>
+                ${isBlocked && student.debt ? `<small style="color: var(--danger); display: block; margin-top: 4px; font-style: italic; font-size: 0.73rem; line-height: 1.25; word-break: break-word;">Motivo: ${student.debt}</small>` : ''}
             </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-                <button class="btn-lock-toggle-student" data-rut="${student.rut}" data-name="${student.name}" data-blocked="${isBlocked}" style="background:${isBlocked ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'}; color:${isBlocked ? 'var(--success)' : 'var(--danger)'}; border:none; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s; padding:0;" title="${isBlocked ? 'Desbloquear Alumno' : 'Bloquear Alumno'}">
-                    <i data-lucide="${isBlocked ? 'unlock' : 'lock'}" style="width:16px; height:16px;"></i>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button class="btn-lock-toggle-student" data-rut="${student.rut}" data-name="${student.name}" data-blocked="${isBlocked}" style="background: ${isBlocked ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'}; color: ${isBlocked ? 'var(--success)' : 'var(--danger)'}; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; padding: 0;" title="${isBlocked ? 'Levantar Sanción / Desbloquear Alumno' : 'Bloquear / Sancionar Alumno'}">
+                    <i data-lucide="${isBlocked ? 'unlock' : 'lock'}" style="width: 16px; height: 16px;"></i>
                 </button>
-                <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}">
+                <button class="btn-delete-item" data-rut="${student.rut}" data-name="${student.name}" title="Eliminar alumno de la base de datos">
                     <i data-lucide="trash-2"></i>
                 </button>
             </div>
         `;
+        
         li.querySelector('.btn-lock-toggle-student').addEventListener('click', (e) => {
             const rut = e.currentTarget.getAttribute('data-rut');
             const name = e.currentTarget.getAttribute('data-name');
@@ -3173,6 +3308,9 @@ async function saveStudentConfig() {
     const fono = document.getElementById('st-fono').value.trim();
     const status = dom.stStatusSelect.value;
     const debt = status === 'Bloqueado' ? document.getElementById('st-debt').value.trim() : '';
+    const blockDate = status === 'Bloqueado' 
+        ? (dom.stBlockDate && dom.stBlockDate.value ? dom.stBlockDate.value : new Date().toISOString().split('T')[0]) 
+        : '';
     
     if (!rawRut || !nameFull || !email) {
         showToast("Rellena los campos obligatorios.", "warning");
@@ -3185,7 +3323,7 @@ async function saveStudentConfig() {
     const lastname = nameParts.slice(1).join(' ') || '';
     
     const rut = formatRut(rawRut);
-    const payload = { rut, name, lastname, fono, email, status, debt };
+    const payload = { rut, name, lastname, fono, email, status, debt, blockDate };
     
     if (CONFIG.demoMode) {
         const exists = appState.students.some(s => cleanRut(s.rut) === cleanRut(rut));
@@ -3199,6 +3337,7 @@ async function saveStudentConfig() {
         showToast(`Estudiante "${nameFull}" registrado`, "success");
         dom.formAddStudent.reset();
         dom.stDebtGroup.classList.add('hidden');
+        if (dom.stBlockDateGroup) dom.stBlockDateGroup.classList.add('hidden');
         renderAdminConfigLists();
         updateAdminDashboard();
     } else {
@@ -3215,6 +3354,7 @@ async function saveStudentConfig() {
                 showToast(`Estudiante registrado correctamente`, "success");
                 dom.formAddStudent.reset();
                 dom.stDebtGroup.classList.add('hidden');
+                if (dom.stBlockDateGroup) dom.stBlockDateGroup.classList.add('hidden');
                 loadData(true);
             } else {
                 showToast(data.message || "Error al registrar.", "danger");
@@ -3298,6 +3438,7 @@ async function toggleStudentSanction(rut, name, blocked) {
             if (student) {
                 student.status = 'Activo';
                 student.debt = '';
+                student.blockDate = '';
             }
             saveDemoState();
             showToast(`Sanción levantada para "${name}".`, "success");
@@ -3329,12 +3470,14 @@ async function toggleStudentSanction(rut, name, blocked) {
         if (reason === null) return; // cancelado
         
         const finalReason = reason.trim() || "Sancionado por el administrador";
+        const dateNow = new Date().toISOString().split('T')[0];
         
         if (CONFIG.demoMode) {
             const student = appState.students.find(s => s.rut === rut);
             if (student) {
                 student.status = 'Bloqueado';
                 student.debt = finalReason;
+                student.blockDate = dateNow;
             }
             saveDemoState();
             showToast(`Estudiante "${name}" bloqueado.`, "info");
@@ -3347,7 +3490,7 @@ async function toggleStudentSanction(rut, name, blocked) {
                     method: 'POST',
                     mode: 'cors',
                     headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({ rut, reason: finalReason })
+                    body: JSON.stringify({ rut, reason: finalReason, date: dateNow })
                 });
                 const data = await response.json();
                 if (data.status === "success") {

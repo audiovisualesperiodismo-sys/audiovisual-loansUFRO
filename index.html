@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=34.0">
+    <link rel="stylesheet" href="styles.css?v=35.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -550,9 +550,13 @@
                                                 <option value="Bloqueado">Bloqueado (Con Deudas)</option>
                                             </select>
                                         </div>
+                                        <div class="input-group hidden" id="st-block-date-group">
+                                            <label for="st-block-date">Fecha Inicio Bloqueo</label>
+                                            <input type="date" id="st-block-date" class="select-input">
+                                        </div>
                                     </div>
                                     <div class="input-group hidden" id="st-debt-group">
-                                        <label for="st-debt">Detalle de la Deuda</label>
+                                        <label for="st-debt">Detalle del Motivo / Deuda</label>
                                         <input type="text" id="st-debt" placeholder="Ej. Debe cable HDMI y cargador">
                                     </div>
                                     <button type="submit" class="btn btn-primary btn-full">
@@ -568,6 +572,20 @@
                                             <i data-lucide="search" style="position:absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--text-secondary); pointer-events:none;"></i>
                                         </div>
                                     </div>
+
+                                    <!-- Filtros Rápidos de Alumnos (Todos / Bloqueados / Activos) -->
+                                    <div class="student-filter-bar">
+                                        <button type="button" class="btn-student-filter active" data-student-filter="all">
+                                            Todos (<span id="count-students-all">0</span>)
+                                        </button>
+                                        <button type="button" class="btn-student-filter btn-filter-danger" data-student-filter="blocked">
+                                            <i data-lucide="lock" style="width:12px; height:12px;"></i> Solo Bloqueados (<span id="count-students-blocked">0</span>)
+                                        </button>
+                                        <button type="button" class="btn-student-filter" data-student-filter="active">
+                                            <i data-lucide="user-check" style="width:12px; height:12px;"></i> Activos (<span id="count-students-active">0</span>)
+                                        </button>
+                                    </div>
+
                                     <ul class="admin-data-list" id="admin-students-list">
                                         <!-- Dinámico -->
                                     </ul>
@@ -801,6 +819,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=34.0"></script>
+    <script src="app.js?v=35.0"></script>
 </body>
 </html>
