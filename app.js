@@ -32,6 +32,7 @@ let appState = {
     loans: [],
     cart: [],
     subjects: [],
+    categories: [],
     selectedCategory: "Cámaras",
     validatedStudent: null,
     isAdminLoggedIn: false,
@@ -84,6 +85,11 @@ const dom = {
     adminLoansTableBody: document.getElementById('admin-loans-table-body'),
     adminLoanFilterBtns: document.querySelectorAll('.btn-filter'),
     formAddEquipment: document.getElementById('form-add-equipment'),
+    eqCategory: document.getElementById('eq-category'),
+    newCategoryWrapper: document.getElementById('new-category-wrapper'),
+    eqNewCategory: document.getElementById('eq-new-category'),
+    btnToggleNewCat: document.getElementById('btn-toggle-new-cat'),
+    btnCancelNewCat: document.getElementById('btn-cancel-new-cat'),
     formAddStudent: document.getElementById('form-add-student'),
     stStatusSelect: document.getElementById('st-status'),
     stDebtGroup: document.getElementById('st-debt-group'),
@@ -280,11 +286,13 @@ async function loadData(forceRefresh = false) {
             appState.loans = JSON.parse(localStorage.getItem('audiolend_demo_loans')) || JSON.parse(JSON.stringify(DEMO_DATABASE.loans));
         }
         appState.subjects = ["Periodismo Escrito", "Periodismo Radial", "Periodismo Televisivo", "Fotoperiodismo", "Comunicación Digital", "Cine y Documental", "Proyecto de Título", "Ninguna (Proyecto Personal)"];
+        appState.categories = [...new Set(appState.inventory.map(i => i.category))];
         
         recalculateDemoStock();
         updateConnectionStatus(true);
         renderLoansModule();
         renderSubjectsDropdown();
+        renderCategoryDropdown();
         
         if (appState.isAdminLoggedIn) {
             updateAdminDashboard();
@@ -314,10 +322,12 @@ async function loadData(forceRefresh = false) {
                         appState.students = cachedData.students || [];
                         appState.loans = cachedData.loans || [];
                         appState.subjects = cachedData.subjects || [];
+                        appState.categories = cachedData.categories || [...new Set(appState.inventory.map(i => i.category))];
                         
                         updateConnectionStatus(false);
                         renderLoansModule();
                         renderSubjectsDropdown();
+                        renderCategoryDropdown();
                         
                         if (appState.isAdminLoggedIn) {
                             updateAdminDashboard();
@@ -348,6 +358,7 @@ async function loadData(forceRefresh = false) {
             appState.students = data.students || [];
             appState.loans = data.loans || [];
             appState.subjects = data.subjects || [];
+            appState.categories = data.categories || [...new Set(appState.inventory.map(i => i.category))];
             
             // Guardar en caché offline para la próxima apertura instantánea
             try {
@@ -355,7 +366,8 @@ async function loadData(forceRefresh = false) {
                     inventory: data.inventory,
                     students: data.students,
                     loans: data.loans,
-                    subjects: data.subjects
+                    subjects: data.subjects,
+                    categories: appState.categories
                 }));
             } catch (storageErr) {
                 console.warn("Aviso: Cuota de almacenamiento local excedida:", storageErr);
@@ -372,6 +384,7 @@ async function loadData(forceRefresh = false) {
             updateConnectionStatus(false);
             renderLoansModule();
             renderSubjectsDropdown();
+            renderCategoryDropdown();
             
             if (appState.isAdminLoggedIn) {
                 updateAdminDashboard();
@@ -516,6 +529,61 @@ function initEventListeners() {
         e.preventDefault();
         saveEquipmentConfig();
     });
+    
+    dom.formAddEquipment.addEventListener('reset', () => {
+        setTimeout(() => {
+            if (dom.newCategoryWrapper) dom.newCategoryWrapper.style.display = 'none';
+            if (dom.eqNewCategory) dom.eqNewCategory.value = '';
+            renderCategoryDropdown();
+        }, 50);
+    });
+    
+    if (dom.eqCategory) {
+        dom.eqCategory.addEventListener('change', () => {
+            if (dom.eqCategory.value === '__NEW__') {
+                if (dom.newCategoryWrapper) {
+                    dom.newCategoryWrapper.style.display = 'block';
+                    if (dom.eqNewCategory) {
+                        dom.eqNewCategory.value = '';
+                        dom.eqNewCategory.focus();
+                    }
+                }
+            } else {
+                if (dom.newCategoryWrapper) {
+                    dom.newCategoryWrapper.style.display = 'none';
+                    if (dom.eqNewCategory) dom.eqNewCategory.value = '';
+                }
+            }
+        });
+    }
+    
+    if (dom.btnToggleNewCat) {
+        dom.btnToggleNewCat.addEventListener('click', () => {
+            if (dom.eqCategory) {
+                dom.eqCategory.value = '__NEW__';
+            }
+            if (dom.newCategoryWrapper) {
+                dom.newCategoryWrapper.style.display = 'block';
+                if (dom.eqNewCategory) {
+                    dom.eqNewCategory.value = '';
+                    dom.eqNewCategory.focus();
+                }
+            }
+        });
+    }
+    
+    if (dom.btnCancelNewCat) {
+        dom.btnCancelNewCat.addEventListener('click', () => {
+            if (dom.newCategoryWrapper) {
+                dom.newCategoryWrapper.style.display = 'none';
+                if (dom.eqNewCategory) dom.eqNewCategory.value = '';
+            }
+            if (dom.eqCategory) {
+                const cats = getAvailableCategories();
+                dom.eqCategory.value = cats.length > 0 ? cats[0] : '';
+            }
+        });
+    }
     
     dom.formAddStudent.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -891,7 +959,9 @@ function showSection(sectionId) {
 // ==========================================
 
 function renderLoansModule() {
-    const categories = [...new Set(appState.inventory.map(item => item.category))];
+    const invCategories = appState.inventory.map(item => item.category).filter(Boolean);
+    const allCategories = [...new Set([...(appState.categories || []), ...invCategories])].filter(Boolean);
+    const categories = allCategories.length > 0 ? allCategories : ["Cámaras", "Trípodes", "Audio", "Luces"];
     
     if (categories.length > 0) {
         const hasCameras = categories.find(c => c.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === "camaras");
@@ -927,7 +997,7 @@ function renderEquipmentGrid() {
     const filtered = appState.inventory.filter(item => item.category === appState.selectedCategory);
     
     if (filtered.length === 0) {
-        dom.equipmentGrid.innerHTML = '<div class="empty-state"><p>No hay equipos registrados.</p></div>';
+        dom.equipmentGrid.innerHTML = '<div class="empty-state"><p>No hay equipos registrados en esta categoría.</p></div>';
         return;
     }
     
@@ -936,11 +1006,19 @@ function renderEquipmentGrid() {
         const card = document.createElement('div');
         card.className = `equipment-item-card ${isSelected ? 'selected' : ''}`;
         
-        let iconName = 'help-circle';
-        if (item.category === 'Cámaras') iconName = 'camera';
-        else if (item.category === 'Trípodes') iconName = 'video';
-        else if (item.category === 'Audio') iconName = 'mic';
-        else if (item.category === 'Luces') iconName = 'sun';
+        let iconName = 'package';
+        const catNorm = (item.category || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (catNorm.includes('camara') || catNorm.includes('foto')) iconName = 'camera';
+        else if (catNorm.includes('tripode') || catNorm.includes('video') || catNorm.includes('estabiliz')) iconName = 'video';
+        else if (catNorm.includes('audio') || catNorm.includes('micro') || catNorm.includes('sonido') || catNorm.includes('boom')) iconName = 'mic';
+        else if (catNorm.includes('luz') || catNorm.includes('luces') || catNorm.includes('iluminac') || catNorm.includes('foco') || catNorm.includes('led')) iconName = 'sun';
+        else if (catNorm.includes('lente') || catNorm.includes('optica') || catNorm.includes('objetivo')) iconName = 'aperture';
+        else if (catNorm.includes('dron')) iconName = 'navigation';
+        else if (catNorm.includes('bater') || catNorm.includes('carga') || catNorm.includes('pila')) iconName = 'battery-charging';
+        else if (catNorm.includes('cable') || catNorm.includes('conector') || catNorm.includes('adaptador')) iconName = 'cable';
+        else if (catNorm.includes('comput') || catNorm.includes('pantalla') || catNorm.includes('monitor') || catNorm.includes('notebook') || catNorm.includes('laptop')) iconName = 'monitor';
+        else if (catNorm.includes('accesorio') || catNorm.includes('bolso') || catNorm.includes('mochila') || catNorm.includes('maleta')) iconName = 'briefcase';
+        else iconName = 'box';
         
         const isAvailable = item.available > 0;
         const imgStyle = isAvailable ? 'width:100%; height:100%; object-fit:contain; transition: var(--transition-smooth);' : 'width:100%; height:100%; object-fit:contain; filter: grayscale(100%); opacity: 0.6; transition: var(--transition-smooth);';
@@ -2846,9 +2924,77 @@ function renderHorizontalBarChart(canvasId, chartKey, labels, data, label, color
     });
 }
 
+function getAvailableCategories() {
+    const list = [];
+    if (appState.categories && Array.isArray(appState.categories)) {
+        list.push(...appState.categories);
+    }
+    if (appState.inventory && Array.isArray(appState.inventory)) {
+        appState.inventory.forEach(item => {
+            if (item.category && item.category.toString().trim()) {
+                list.push(item.category.toString().trim());
+            }
+        });
+    }
+    // Categorías base por defecto si no hay ninguna
+    if (list.length === 0) {
+        list.push("Cámaras", "Trípodes", "Audio", "Luces");
+    }
+    
+    // Desduplicar sin distinguir tildes/mayúsculas pero preservando el formato original
+    const unique = [];
+    const seen = new Set();
+    list.forEach(c => {
+        const norm = c.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (!seen.has(norm) && norm !== "") {
+            seen.add(norm);
+            unique.push(c.trim());
+        }
+    });
+    return unique;
+}
+
+function renderCategoryDropdown(selectedCat = null) {
+    const select = document.getElementById('eq-category');
+    if (!select) return;
+    
+    const categories = getAvailableCategories();
+    const currentVal = selectedCat || select.value;
+    
+    select.innerHTML = '<option value="" disabled>Selecciona una categoría...</option>';
+    categories.forEach(cat => {
+        const opt = document.createElement('option');
+        opt.value = cat;
+        opt.textContent = cat;
+        select.appendChild(opt);
+    });
+    
+    // Opción para registrar nueva categoría
+    const newOpt = document.createElement('option');
+    newOpt.value = '__NEW__';
+    newOpt.textContent = '➕ Agregar Nueva Categoría...';
+    newOpt.style.fontWeight = '700';
+    newOpt.style.color = 'var(--primary)';
+    select.appendChild(newOpt);
+    
+    if (currentVal && categories.includes(currentVal)) {
+        select.value = currentVal;
+    } else if (categories.length > 0) {
+        select.value = categories[0];
+    }
+    
+    const newCatWrapper = document.getElementById('new-category-wrapper');
+    if (newCatWrapper && select.value !== '__NEW__') {
+        newCatWrapper.style.display = 'none';
+        const newCatInput = document.getElementById('eq-new-category');
+        if (newCatInput) newCatInput.value = '';
+    }
+}
+
 function renderAdminConfigLists() {
     renderAdminEquipmentList();
     renderAdminStudentsList();
+    renderCategoryDropdown();
 }
 
 function renderAdminEquipmentList() {
@@ -2945,7 +3091,26 @@ function renderAdminStudentsList() {
 
 async function saveEquipmentConfig() {
     const name = document.getElementById('eq-name').value.trim();
-    const category = document.getElementById('eq-category').value;
+    const selectCat = document.getElementById('eq-category').value;
+    const newCatInput = document.getElementById('eq-new-category');
+    const newCatWrapper = document.getElementById('new-category-wrapper');
+    
+    let category = selectCat;
+    if (selectCat === '__NEW__' || (newCatWrapper && newCatWrapper.style.display !== 'none')) {
+        const typedCat = newCatInput ? newCatInput.value.trim() : '';
+        if (!typedCat) {
+            showToast("Por favor escribe el nombre de la nueva categoría.", "warning");
+            if (newCatInput) newCatInput.focus();
+            return;
+        }
+        category = typedCat.charAt(0).toUpperCase() + typedCat.slice(1);
+    }
+    
+    if (!category || category === '__NEW__') {
+        showToast("Selecciona o escribe una categoría.", "warning");
+        return;
+    }
+    
     const total = parseInt(document.getElementById('eq-qty').value);
     const codesRaw = document.getElementById('eq-codes').value.trim();
     const codes = codesRaw.split(',').map(c => c.trim().toUpperCase()).filter(c => c.length > 0);
@@ -2953,8 +3118,8 @@ async function saveEquipmentConfig() {
     const image = getDirectImageUrl(imageRaw);
     const description = document.getElementById('eq-description') ? document.getElementById('eq-description').value.trim() : '';
     
-    if (!name || codes.length === 0) {
-        showToast("Completa los campos requeridos.", "warning");
+    if (!name || codes.length === 0 || isNaN(total) || total <= 0) {
+        showToast("Completa los campos requeridos correctamente.", "warning");
         return;
     }
     
@@ -2963,14 +3128,18 @@ async function saveEquipmentConfig() {
     if (CONFIG.demoMode) {
         const newId = appState.inventory.length > 0 ? Math.max(...appState.inventory.map(i => i.id)) + 1 : 1;
         appState.inventory.push({ id: newId, category, name, total, available: total, codes, image, description });
+        if (!appState.categories.includes(category)) {
+            appState.categories.push(category);
+        }
         saveDemoState();
-        showToast(`Equipo "${name}" guardado`, "success");
+        showToast(`Equipo "${name}" guardado en categoría "${category}".`, "success");
         dom.formAddEquipment.reset();
+        renderCategoryDropdown(category);
         renderAdminConfigLists();
         renderLoansModule();
         updateAdminDashboard();
     } else {
-        showToast("Agregando equipo...", "info");
+        showToast("Agregando equipo a Google Sheets...", "info");
         try {
             const response = await fetch(`${CONFIG.scriptUrl}?action=addEquipment`, {
                 method: 'POST',
@@ -2980,15 +3149,19 @@ async function saveEquipmentConfig() {
             });
             const data = await response.json();
             if (data.status === "success") {
-                showToast(`Equipo "${name}" agregado.`, "success");
+                showToast(`Equipo "${name}" agregado con éxito.`, "success");
                 dom.formAddEquipment.reset();
+                if (!appState.categories.includes(category)) {
+                    appState.categories.push(category);
+                }
+                renderCategoryDropdown(category);
                 loadData(true);
             } else {
-                showToast(data.message || "Error al agregar.", "danger");
+                showToast(data.message || "Error al agregar equipo.", "danger");
             }
         } catch (e) {
             console.error(e);
-            showToast("Error de red.", "danger");
+            showToast("Error de red al registrar equipo.", "danger");
         }
     }
 }

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=33.0">
+    <link rel="stylesheet" href="styles.css?v=34.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -468,13 +468,27 @@
                                     </div>
                                     <div class="input-group-row">
                                         <div class="input-group">
-                                            <label for="eq-category">Categoría</label>
+                                            <div class="category-header-row">
+                                                <label for="eq-category" style="margin-bottom: 0;">Categoría</label>
+                                                <button type="button" id="btn-toggle-new-cat" class="btn-toggle-cat" title="Agregar una nueva categoría si no existe en la lista">
+                                                    <i data-lucide="plus" style="width: 13px; height: 13px;"></i> + Nueva Categoría
+                                                </button>
+                                            </div>
                                             <select id="eq-category" required class="select-input">
-                                                <option value="Cámaras">Cámaras</option>
-                                                <option value="Trípodes">Trípodes</option>
-                                                <option value="Audio">Audio</option>
-                                                <option value="Luces">Luces</option>
+                                                <!-- Dinámico desde Google Sheets / Inventario -->
                                             </select>
+                                            <div id="new-category-wrapper" class="new-category-box" style="display: none;">
+                                                <label for="eq-new-category" style="font-size: 0.74rem; color: var(--primary); font-weight: 700; display: flex; align-items: center; gap: 4px; margin: 0;">
+                                                    <i data-lucide="folder-plus" style="width: 13px; height: 13px;"></i> Nueva Categoría:
+                                                </label>
+                                                <div style="display: flex; gap: 6px;">
+                                                    <input type="text" id="eq-new-category" class="select-input" placeholder="Ej. Drones, Lentes, Notebooks..." style="flex: 1; background: #ffffff; font-size: 0.82rem; height: 36px;">
+                                                    <button type="button" id="btn-cancel-new-cat" class="btn btn-secondary" style="padding: 6px 10px; font-size: 0.75rem; white-space: nowrap; height: 36px;">
+                                                        Cancelar
+                                                    </button>
+                                                </div>
+                                                <small style="color: var(--text-secondary); font-size: 0.7rem; line-height: 1.2;">Se registrará y quedará disponible para este y futuros equipos.</small>
+                                            </div>
                                         </div>
                                         <div class="input-group">
                                             <label for="eq-qty">Cantidad Total</label>
@@ -787,6 +801,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=33.0"></script>
+    <script src="app.js?v=34.0"></script>
 </body>
 </html>

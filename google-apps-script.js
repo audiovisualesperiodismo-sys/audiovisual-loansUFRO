@@ -234,7 +234,7 @@ function doGet(e) {
 function clearInitDataCache() {
   try {
     const cache = CacheService.getScriptCache();
-    const keys = ["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_url"];
+    const keys = ["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_cat", "avp_url"];
     cache.removeAll(keys);
     keys.forEach(k => {
       try { cache.remove(k); } catch(err) {}
@@ -285,15 +285,21 @@ function getCachedInitData(ss, isFresh) {
       const cachedInv = cache.get("avp_inv");
       const cachedSt = cache.get("avp_st");
       const cachedSb = cache.get("avp_sb");
+      const cachedCat = cache.get("avp_cat");
       const cachedUrl = cache.get("avp_url");
       
       if (cachedInv && cachedSt && cachedSb) {
+        let catParsed = cachedCat ? JSON.parse(cachedCat) : null;
+        if (!catParsed || catParsed.length === 0) {
+          catParsed = getCategoriesData(ss, JSON.parse(cachedInv));
+        }
         return {
           status: "success",
           inventory: JSON.parse(cachedInv),
           students: JSON.parse(cachedSt),
           loans: loans, // Préstamos frescos 100% en tiempo real
           subjects: JSON.parse(cachedSb),
+          categories: catParsed,
           sheetUrl: cachedUrl || ss.getUrl(),
           debugInfo: debugInfo,
           fromCache: true
@@ -307,20 +313,23 @@ function getCachedInitData(ss, isFresh) {
   const inventory = getInventoryData(ss);
   const students = getStudentsData(ss);
   const subjects = getSubjectsData(ss);
+  const categories = getCategoriesData(ss, inventory);
   const sheetUrl = ss.getUrl();
   
   try {
     const invStr = JSON.stringify(inventory);
     const stStr = JSON.stringify(students);
     const sbStr = JSON.stringify(subjects);
+    const catStr = JSON.stringify(categories);
     
     const entries = {};
     if (invStr.length < 95000) entries["avp_inv"] = invStr;
     if (stStr.length < 95000) entries["avp_st"] = stStr;
     if (sbStr.length < 95000) entries["avp_sb"] = sbStr;
+    if (catStr.length < 95000) entries["avp_cat"] = catStr;
     entries["avp_url"] = sheetUrl;
     
-    cache.putAll(entries, 300); // 5 minutos de caché para inventario y alumnos
+    cache.putAll(entries, 300); // 5 minutos de caché para inventario, alumnos y categorías
   } catch (e) {
     Logger.log("Cache write error: " + e.toString());
   }
@@ -331,6 +340,7 @@ function getCachedInitData(ss, isFresh) {
     students: students,
     loans: loans, // Préstamos en vivo
     subjects: subjects,
+    categories: categories,
     sheetUrl: sheetUrl,
     debugInfo: debugInfo,
     fromCache: false
@@ -381,6 +391,9 @@ function doPost(e) {
     }
     else if (action === "sendContactEmail") {
       responseData = executeSendContactEmail(ss, postData);
+    }
+    else if (action === "addCategory") {
+      responseData = executeAddCategory(ss, postData);
     }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
@@ -509,6 +522,46 @@ function getSubjectsData(ss) {
     }
   }
   return subjects;
+}
+
+function getCategoriesData(ss, inventory) {
+  let categories = [];
+  const catSheet = ss.getSheetByName("Categorías") || ss.getSheetByName("Categorias");
+  if (catSheet) {
+    const values = catSheet.getDataRange().getValues();
+    for (let i = 1; i < values.length; i++) {
+      const val = values[i][0];
+      if (val && val.toString().trim() !== "") {
+        categories.push(val.toString().trim());
+      }
+    }
+  }
+  
+  // Extraer también las categorías existentes en la pestaña Inventario
+  if (inventory && Array.isArray(inventory)) {
+    inventory.forEach(item => {
+      if (item.category && item.category.toString().trim() !== "") {
+        categories.push(item.category.toString().trim());
+      }
+    });
+  }
+  
+  // Categorías base por defecto si no hubiese ninguna
+  if (categories.length === 0) {
+    categories = ["Cámaras", "Trípodes", "Audio", "Luces"];
+  }
+  
+  // Desduplicar preservando formato
+  const unique = [];
+  const seen = new Set();
+  categories.forEach(cat => {
+    const norm = cat.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (!seen.has(norm) && norm !== "") {
+      seen.add(norm);
+      unique.push(cat);
+    }
+  });
+  return unique;
 }
 
 // ==========================================
@@ -1308,7 +1361,48 @@ function executeAddEquipment(ss, payload) {
   if (descriptionIdx !== -1) newRow[descriptionIdx] = payload.description || "";
   
   sheet.appendRow(newRow);
-  return { status: "success", message: "Equipo guardado." };
+
+  // Si existe la pestaña Categorías, verificar si esta categoría ya está registrada; si no, agregarla
+  try {
+    const catSheet = ss.getSheetByName("Categorías") || ss.getSheetByName("Categorias");
+    if (catSheet && payload.category) {
+      const catVals = catSheet.getDataRange().getValues();
+      const normNew = payload.category.toString().trim().toLowerCase();
+      let exists = false;
+      for (let c = 1; c < catVals.length; c++) {
+        if (catVals[c][0] && catVals[c][0].toString().trim().toLowerCase() === normNew) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        catSheet.appendRow([payload.category.toString().trim()]);
+      }
+    }
+  } catch (err) {
+    Logger.log("Aviso al actualizar Categorías: " + err.toString());
+  }
+
+  return { status: "success", message: "Equipo guardado con éxito." };
+}
+
+function executeAddCategory(ss, payload) {
+  let catSheet = ss.getSheetByName("Categorías") || ss.getSheetByName("Categorias");
+  if (!catSheet) {
+    catSheet = ss.insertSheet("Categorías");
+    catSheet.appendRow(["Categoría"]);
+  }
+  const newCat = (payload.category || "").toString().trim();
+  if (!newCat) throw new Error("Nombre de categoría no válido.");
+  
+  const values = catSheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] && values[i][0].toString().trim().toLowerCase() === newCat.toLowerCase()) {
+      return { status: "success", message: "La categoría ya existe." };
+    }
+  }
+  catSheet.appendRow([newCat]);
+  return { status: "success", message: "Categoría registrada con éxito." };
 }
 
 function executeDeleteEquipment(ss, payload) {

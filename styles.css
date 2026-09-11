@@ -1442,6 +1442,46 @@ input:checked + .slider:before {
     padding-bottom: 24px;
 }
 
+/* Selector dinámico de categorías y campo de nueva categoría */
+.category-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.btn-toggle-cat {
+    background: transparent;
+    border: none;
+    color: var(--primary);
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+    transition: var(--transition-fast);
+}
+
+.btn-toggle-cat:hover {
+    background: rgba(2, 132, 199, 0.08);
+    color: var(--primary-dark);
+}
+
+.new-category-box {
+    background: #f0f9ff;
+    border: 1px dashed var(--primary);
+    border-radius: var(--border-radius-sm);
+    padding: 10px;
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    animation: fadeIn 0.2s ease;
+}
+
 /* Listas de Edición Rápida (Eliminar elementos) */
 .registered-list-container {
     display: flex;
