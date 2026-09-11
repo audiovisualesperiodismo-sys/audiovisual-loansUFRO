@@ -545,6 +545,17 @@ function getSubjectsData(ss) {
   return subjects;
 }
 
+function cleanCategoryGAS(cat) {
+  if (!cat) return "";
+  const clean = cat.toString().trim().replace(/\s+/g, ' ');
+  const norm = clean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (norm === "camaras" || norm === "camara") return "Cámaras";
+  if (norm === "tripodes" || norm === "tripode") return "Trípodes";
+  if (norm === "microfonos" || norm === "microfono") return "Micrófonos";
+  if (norm === "iluminacion" || norm === "iluminaciones" || norm === "luces") return "Iluminación";
+  return clean;
+}
+
 function getCategoriesData(ss, inventory) {
   let categories = [];
   const catSheet = ss.getSheetByName("Categorías") || ss.getSheetByName("Categorias");
@@ -553,7 +564,7 @@ function getCategoriesData(ss, inventory) {
     for (let i = 1; i < values.length; i++) {
       const val = values[i][0];
       if (val && val.toString().trim() !== "") {
-        categories.push(val.toString().trim());
+        categories.push(cleanCategoryGAS(val.toString()));
       }
     }
   }
@@ -562,7 +573,7 @@ function getCategoriesData(ss, inventory) {
   if (inventory && Array.isArray(inventory)) {
     inventory.forEach(item => {
       if (item.category && item.category.toString().trim() !== "") {
-        categories.push(item.category.toString().trim());
+        categories.push(cleanCategoryGAS(item.category.toString()));
       }
     });
   }
@@ -572,7 +583,7 @@ function getCategoriesData(ss, inventory) {
     categories = ["Cámaras", "Trípodes", "Audio", "Luces"];
   }
   
-  // Desduplicar preservando formato
+  // Desduplicar preservando formato canónico
   const unique = [];
   const seen = new Set();
   categories.forEach(cat => {
@@ -582,6 +593,14 @@ function getCategoriesData(ss, inventory) {
       unique.push(cat);
     }
   });
+
+  // Asegurar que Cámaras esté siempre como la primera pestaña si existe
+  const camIdx = unique.findIndex(c => c.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === "camaras");
+  if (camIdx > 0) {
+    const camCat = unique.splice(camIdx, 1)[0];
+    unique.unshift(camCat);
+  }
+
   return unique;
 }
 
@@ -614,7 +633,7 @@ function getInventoryData(ss) {
     
     inventory.push({
       id: i,
-      category: row[categoryIdx].toString(),
+      category: cleanCategoryGAS(row[categoryIdx]),
       name: row[nameIdx].toString(),
       total: totalVal,
       available: availableVal,
@@ -1383,8 +1402,9 @@ function executeAddEquipment(ss, payload) {
   const headers = values[0].map(normalizeHeader);
   const { categoryIdx, nameIdx, totalIdx, availableIdx, codesIdx, imageIdx, descriptionIdx } = getInventoryHeaderIndices(headers);
   
+  const cleanCat = cleanCategoryGAS(payload.category);
   const newRow = new Array(headers.length).fill("");
-  if (categoryIdx !== -1) newRow[categoryIdx] = payload.category;
+  if (categoryIdx !== -1) newRow[categoryIdx] = cleanCat;
   if (nameIdx !== -1) newRow[nameIdx] = payload.name;
   if (totalIdx !== -1) newRow[totalIdx] = payload.total;
   if (availableIdx !== -1) newRow[availableIdx] = payload.total;
@@ -1397,18 +1417,19 @@ function executeAddEquipment(ss, payload) {
   // Si existe la pestaña Categorías, verificar si esta categoría ya está registrada; si no, agregarla
   try {
     const catSheet = ss.getSheetByName("Categorías") || ss.getSheetByName("Categorias");
-    if (catSheet && payload.category) {
+    if (catSheet && cleanCat) {
       const catVals = catSheet.getDataRange().getValues();
-      const normNew = payload.category.toString().trim().toLowerCase();
+      const normNew = cleanCat.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       let exists = false;
       for (let c = 1; c < catVals.length; c++) {
-        if (catVals[c][0] && catVals[c][0].toString().trim().toLowerCase() === normNew) {
+        const valNorm = catVals[c][0] ? catVals[c][0].toString().trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
+        if (valNorm === normNew) {
           exists = true;
           break;
         }
       }
       if (!exists) {
-        catSheet.appendRow([payload.category.toString().trim()]);
+        catSheet.appendRow([cleanCat]);
       }
     }
   } catch (err) {

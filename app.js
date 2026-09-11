@@ -231,6 +231,17 @@ function getDirectImageUrl(url) {
     return url;
 }
 
+function cleanCategoryName(cat) {
+    if (!cat) return "Otros";
+    const clean = cat.toString().trim().replace(/\s+/g, ' ').normalize("NFC");
+    const norm = clean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (norm === "camaras" || norm === "camara") return "Cámaras";
+    if (norm === "tripodes" || norm === "tripode") return "Trípodes";
+    if (norm === "microfonos" || norm === "microfono") return "Micrófonos";
+    if (norm === "iluminacion" || norm === "iluminaciones" || norm === "luces") return "Iluminación";
+    return clean;
+}
+
 function groupInventoryItems(rawInventory) {
     const grouped = [];
     if (!rawInventory || !Array.isArray(rawInventory)) return [];
@@ -239,6 +250,7 @@ function groupInventoryItems(rawInventory) {
         if (!item || !item.name) return;
         const normalizedName = item.name.trim();
         const existing = grouped.find(i => i.name.toLowerCase() === normalizedName.toLowerCase());
+        const cleanCat = cleanCategoryName(item.category);
         
         if (existing) {
             existing.total += parseInt(item.total) || 0;
@@ -257,10 +269,13 @@ function groupInventoryItems(rawInventory) {
             if (!existing.description && item.description) {
                 existing.description = item.description;
             }
+            if (cleanCat && (!existing.category || existing.category === "Otros")) {
+                existing.category = cleanCat;
+            }
         } else {
             grouped.push({
                 id: item.id,
-                category: item.category,
+                category: cleanCat,
                 name: normalizedName,
                 total: parseInt(item.total) || 0,
                 available: parseInt(item.available) || 0,
@@ -325,7 +340,9 @@ async function loadData(forceRefresh = false) {
                         appState.students = cachedData.students || [];
                         appState.loans = cachedData.loans || [];
                         appState.subjects = cachedData.subjects || [];
-                        appState.categories = cachedData.categories || [...new Set(appState.inventory.map(i => i.category))];
+                        appState.categories = (cachedData.categories && Array.isArray(cachedData.categories))
+                            ? cachedData.categories.map(cleanCategoryName)
+                            : [...new Set(appState.inventory.map(i => i.category))];
                         
                         updateConnectionStatus(false);
                         renderLoansModule();
@@ -361,7 +378,9 @@ async function loadData(forceRefresh = false) {
             appState.students = data.students || [];
             appState.loans = data.loans || [];
             appState.subjects = data.subjects || [];
-            appState.categories = data.categories || [...new Set(appState.inventory.map(i => i.category))];
+            appState.categories = (data.categories && Array.isArray(data.categories))
+                ? data.categories.map(cleanCategoryName)
+                : [...new Set(appState.inventory.map(i => i.category))];
             
             // Guardar en caché offline para la próxima apertura instantánea
             try {
@@ -982,19 +1001,58 @@ function showSection(sectionId) {
 // ==========================================
 
 function renderLoansModule() {
-    const invCategories = appState.inventory.map(item => item.category).filter(Boolean);
-    const allCategories = [...new Set([...(appState.categories || []), ...invCategories])].filter(Boolean);
-    const categories = allCategories.length > 0 ? allCategories : ["Cámaras", "Trípodes", "Audio", "Luces"];
-    
-    if (categories.length > 0) {
-        const hasCameras = categories.find(c => c.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === "camaras");
-        if (hasCameras) {
-            appState.selectedCategory = hasCameras;
-        } else if (!categories.includes(appState.selectedCategory)) {
-            appState.selectedCategory = categories[0];
+    // 1. Contar equipos por categoría normalizada para descartar categorías vacías
+    const categoryItemCount = {};
+    appState.inventory.forEach(item => {
+        const cat = cleanCategoryName(item.category);
+        if (cat) {
+            categoryItemCount[cat] = (categoryItemCount[cat] || 0) + 1;
         }
+    });
+
+    const rawCandidates = [
+        ...(appState.categories || []),
+        ...appState.inventory.map(i => i.category)
+    ].map(cleanCategoryName).filter(Boolean);
+
+    // 2. Desduplicar preservando formato canónico y descartando categorías que no tengan equipos registrados
+    const uniqueCategories = [];
+    const seenNorm = new Set();
+    rawCandidates.forEach(cat => {
+        const norm = cat.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        if (!seenNorm.has(norm) && norm !== "") {
+            const count = categoryItemCount[cat] || 0;
+            // Solo incluir si tiene equipos en inventario (o si el inventario general está vacío)
+            if (count > 0 || appState.inventory.length === 0) {
+                seenNorm.add(norm);
+                uniqueCategories.push(cat);
+            }
+        }
+    });
+
+    // 3. Reordenar: Cámaras SIEMPRE de primera pestaña
+    const camIdx = uniqueCategories.findIndex(c => 
+        c.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() === "camaras"
+    );
+    if (camIdx > 0) {
+        const [camCat] = uniqueCategories.splice(camIdx, 1);
+        uniqueCategories.unshift(camCat);
     }
-    
+
+    const categories = uniqueCategories.length > 0 ? uniqueCategories : ["Cámaras", "Trípodes", "Audio", "Luces"];
+
+    // 4. Asegurar selección de categoría: si la actual no existe o no tiene equipos, seleccionar la primera (Cámaras)
+    const currentNorm = (appState.selectedCategory || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const matchedCategory = categories.find(c => 
+        c.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() === currentNorm
+    );
+
+    if (matchedCategory) {
+        appState.selectedCategory = matchedCategory;
+    } else {
+        appState.selectedCategory = categories[0];
+    }
+
     dom.categoryTabs.innerHTML = '';
     categories.forEach(cat => {
         const li = document.createElement('li');
@@ -1010,15 +1068,21 @@ function renderLoansModule() {
         li.appendChild(btn);
         dom.categoryTabs.appendChild(li);
     });
-    
+
     renderEquipmentGrid();
     renderCart();
 }
 
 function renderEquipmentGrid() {
     dom.equipmentGrid.innerHTML = '';
-    const filtered = appState.inventory.filter(item => item.category === appState.selectedCategory);
+    const selNorm = (appState.selectedCategory || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
     
+    const filtered = appState.inventory.filter(item => {
+        const itemCat = cleanCategoryName(item.category);
+        const itemNorm = itemCat.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        return itemNorm === selNorm || item.category === appState.selectedCategory;
+    });
+
     if (filtered.length === 0) {
         dom.equipmentGrid.innerHTML = '<div class="empty-state"><p>No hay equipos registrados en esta categoría.</p></div>';
         return;
@@ -2950,21 +3014,19 @@ function renderHorizontalBarChart(canvasId, chartKey, labels, data, label, color
 function getAvailableCategories() {
     const list = [];
     if (appState.categories && Array.isArray(appState.categories)) {
-        list.push(...appState.categories);
+        list.push(...appState.categories.map(cleanCategoryName));
     }
     if (appState.inventory && Array.isArray(appState.inventory)) {
         appState.inventory.forEach(item => {
-            if (item.category && item.category.toString().trim()) {
-                list.push(item.category.toString().trim());
-            }
+            const c = cleanCategoryName(item.category);
+            if (c) list.push(c);
         });
     }
-    // Categorías base por defecto si no hay ninguna
     if (list.length === 0) {
         list.push("Cámaras", "Trípodes", "Audio", "Luces");
     }
     
-    // Desduplicar sin distinguir tildes/mayúsculas pero preservando el formato original
+    // Desduplicar sin distinguir tildes/mayúsculas pero preservando el formato canónico
     const unique = [];
     const seen = new Set();
     list.forEach(c => {
@@ -2974,6 +3036,16 @@ function getAvailableCategories() {
             unique.push(c.trim());
         }
     });
+
+    // Asegurar que Cámaras esté siempre de primera posición
+    const camIdx = unique.findIndex(c => 
+        c.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() === "camaras"
+    );
+    if (camIdx > 0) {
+        const [camCat] = unique.splice(camIdx, 1);
+        unique.unshift(camCat);
+    }
+
     return unique;
 }
 
@@ -3258,18 +3330,19 @@ async function saveEquipmentConfig() {
         return;
     }
     
-    const payload = { name, category, total, codes, image, description };
+    const cleanCat = cleanCategoryName(category);
+    const payload = { name, category: cleanCat, total, codes, image, description };
     
     if (CONFIG.demoMode) {
         const newId = appState.inventory.length > 0 ? Math.max(...appState.inventory.map(i => i.id)) + 1 : 1;
-        appState.inventory.push({ id: newId, category, name, total, available: total, codes, image, description });
-        if (!appState.categories.includes(category)) {
-            appState.categories.push(category);
+        appState.inventory.push({ id: newId, category: cleanCat, name, total, available: total, codes, image, description });
+        if (!appState.categories.some(c => cleanCategoryName(c) === cleanCat)) {
+            appState.categories.push(cleanCat);
         }
         saveDemoState();
-        showToast(`Equipo "${name}" guardado en categoría "${category}".`, "success");
+        showToast(`Equipo "${name}" guardado en categoría "${cleanCat}".`, "success");
         dom.formAddEquipment.reset();
-        renderCategoryDropdown(category);
+        renderCategoryDropdown(cleanCat);
         renderAdminConfigLists();
         renderLoansModule();
         updateAdminDashboard();
@@ -3286,10 +3359,10 @@ async function saveEquipmentConfig() {
             if (data.status === "success") {
                 showToast(`Equipo "${name}" agregado con éxito.`, "success");
                 dom.formAddEquipment.reset();
-                if (!appState.categories.includes(category)) {
-                    appState.categories.push(category);
+                if (!appState.categories.some(c => cleanCategoryName(c) === cleanCat)) {
+                    appState.categories.push(cleanCat);
                 }
-                renderCategoryDropdown(category);
+                renderCategoryDropdown(cleanCat);
                 loadData(true);
             } else {
                 showToast(data.message || "Error al agregar equipo.", "danger");
