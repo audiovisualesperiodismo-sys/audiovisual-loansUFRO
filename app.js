@@ -56,6 +56,9 @@ const dom = {
     modeToggle: document.getElementById('mode-toggle'),
     modeSwitchContainer: document.getElementById('mode-switch-container'),
     btnRefresh: document.getElementById('btn-refresh'),
+    offlineSyncBanner: document.getElementById('offline-sync-banner'),
+    offlineSyncText: document.getElementById('offline-sync-text'),
+    btnSyncNow: document.getElementById('btn-sync-now'),
     categoryTabs: document.getElementById('category-tabs-list'),
     equipmentGrid: document.getElementById('equipment-grid-container'),
     selectedItems: document.getElementById('selected-items-container'),
@@ -198,6 +201,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     loadData();
     initEventListeners();
+    setupNetworkListeners();
+    startHeartbeat();
     lucide.createIcons();
     
     // Registro de Service Worker para PWA (Fase 23)
@@ -288,6 +293,407 @@ function groupInventoryItems(rawInventory) {
     return grouped;
 }
 
+// ==========================================
+// MOTOR DE CONECTIVIDAD, CACHÉ Y COLA OFFLINE
+// ==========================================
+
+async function fetchWithTimeout(resource, options = {}, timeoutMs = 12000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(resource, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+    } catch (err) {
+        clearTimeout(id);
+        throw err;
+    }
+}
+
+async function fetchWithRetry(resource, options = {}, retries = 2, delayMs = 1000, timeoutMs = 12000) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const res = await fetchWithTimeout(resource, options, timeoutMs);
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            return res;
+        } catch (err) {
+            lastError = err;
+            if (attempt < retries) {
+                await new Promise(resolve => setTimeout(resolve, delayMs * (attempt + 1)));
+            }
+        }
+    }
+    throw lastError;
+}
+
+const OFFLINE_QUEUE_KEY = 'audiolend_offline_queue';
+
+function getOfflineQueue() {
+    try {
+        const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+        console.error("Error leyendo offline queue:", e);
+        return [];
+    }
+}
+
+function saveOfflineQueue(queue) {
+    try {
+        localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    } catch (e) {
+        console.error("Error guardando offline queue:", e);
+    }
+    updateOfflineBanner();
+}
+
+function addToOfflineQueue(item) {
+    const queue = getOfflineQueue();
+    const isDup = queue.some(q => q.action === item.action && q.payload && q.payload.loanId === item.payload.loanId);
+    if (!isDup) {
+        queue.push({
+            id: 'sync_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+            action: item.action,
+            payload: item.payload,
+            description: item.description || item.action,
+            createdAt: Date.now()
+        });
+        saveOfflineQueue(queue);
+    }
+    setConnectionState("pending");
+}
+
+let isFlushingQueue = false;
+async function flushOfflineQueue() {
+    if (isFlushingQueue) return;
+    if (CONFIG.demoMode || !CONFIG.scriptUrl) return;
+    if (!navigator.onLine) {
+        updateOfflineBanner();
+        return;
+    }
+
+    const queue = getOfflineQueue();
+    if (queue.length === 0) {
+        updateOfflineBanner();
+        return;
+    }
+
+    isFlushingQueue = true;
+    setConnectionState("syncing");
+    if (dom.btnSyncNow) {
+        dom.btnSyncNow.disabled = true;
+        dom.btnSyncNow.innerHTML = '<i data-lucide="loader" class="spin"></i> Sincronizando...';
+        if (window.lucide) lucide.createIcons();
+    }
+
+    const remainingQueue = [...queue];
+    let syncedCount = 0;
+
+    for (let i = 0; i < queue.length; i++) {
+        const op = queue[i];
+        try {
+            const url = `${CONFIG.scriptUrl}?action=${op.action}`;
+            const res = await fetchWithRetry(url, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify(op.payload)
+            }, 1, 1000, 15000);
+
+            const json = await res.json();
+            if (json.status === "success" || json.status === "warning") {
+                syncedCount++;
+                remainingQueue.shift();
+                saveOfflineQueue(remainingQueue);
+            } else {
+                console.warn(`Operación en cola ${op.action} falló con respuesta:`, json);
+                if (json.message && (json.message.includes("no encontrado") || json.message.includes("no existe"))) {
+                    remainingQueue.shift();
+                    saveOfflineQueue(remainingQueue);
+                } else {
+                    break;
+                }
+            }
+        } catch (netErr) {
+            console.warn(`Error de red al sincronizar cola (${op.action}):`, netErr);
+            break;
+        }
+    }
+
+    isFlushingQueue = false;
+    if (dom.btnSyncNow) {
+        dom.btnSyncNow.disabled = false;
+        dom.btnSyncNow.innerHTML = '<i data-lucide="refresh-cw"></i> Sincronizar ahora';
+        if (window.lucide) lucide.createIcons();
+    }
+
+    if (syncedCount > 0) {
+        showToast(`Se sincronizaron ${syncedCount} cambios pendientes con Google Sheets`, "success");
+        loadData(false);
+    }
+
+    if (remainingQueue.length === 0) {
+        setConnectionState("connected");
+    } else {
+        setConnectionState("pending");
+    }
+    updateOfflineBanner();
+}
+
+function updateOfflineBanner() {
+    if (!dom.offlineSyncBanner) return;
+    const queue = getOfflineQueue();
+    const isOffline = !navigator.onLine;
+
+    if (CONFIG.demoMode) {
+        dom.offlineSyncBanner.classList.add('hidden');
+        return;
+    }
+
+    if (queue.length > 0) {
+        dom.offlineSyncBanner.classList.remove('hidden');
+        if (dom.offlineSyncText) {
+            dom.offlineSyncText.textContent = isOffline
+                ? `Sin conexión a Internet: ${queue.length} cambio(s) guardados localmente.`
+                : `${queue.length} cambio(s) pendientes por sincronizar con Google Sheets.`;
+        }
+        if (dom.btnSyncNow) {
+            dom.btnSyncNow.style.display = isOffline ? 'none' : 'inline-flex';
+        }
+    } else if (isOffline) {
+        dom.offlineSyncBanner.classList.remove('hidden');
+        if (dom.offlineSyncText) {
+            dom.offlineSyncText.textContent = "Trabajando sin conexión a Internet. Los cambios se guardarán localmente.";
+        }
+        if (dom.btnSyncNow) {
+            dom.btnSyncNow.style.display = 'none';
+        }
+    } else {
+        dom.offlineSyncBanner.classList.add('hidden');
+    }
+    if (window.lucide) lucide.createIcons();
+}
+
+function setConnectionState(state) {
+    if (!dom.connectionStatus) return;
+    const label = dom.connectionStatus.querySelector('.status-label');
+
+    if (CONFIG.demoMode) {
+        dom.connectionStatus.className = "status-indicator demo-active";
+        if (label) label.textContent = "Modo Demo Activo";
+        return;
+    }
+
+    const queue = getOfflineQueue();
+    if (state === "pending" || (queue.length > 0 && state !== "offline")) {
+        dom.connectionStatus.className = "status-indicator pending-active";
+        if (label) label.textContent = `Pendiente sincronizar (${queue.length})`;
+        return;
+    }
+
+    if (state === "offline" || !navigator.onLine) {
+        dom.connectionStatus.className = "status-indicator offline-active";
+        if (label) label.textContent = "Sin conexión (Local)";
+        return;
+    }
+
+    if (state === "syncing") {
+        dom.connectionStatus.className = "status-indicator";
+        if (label) label.textContent = "Sincronizando...";
+        return;
+    }
+
+    if (state === "connected") {
+        dom.connectionStatus.className = "status-indicator live-active";
+        if (label) label.textContent = "Conectado a Google Sheets";
+        return;
+    }
+}
+
+function updateConnectionStatus(isDemo) {
+    if (isDemo === true) {
+        setConnectionState("demo");
+    } else if (isDemo === false) {
+        const queue = getOfflineQueue();
+        if (queue.length > 0) {
+            setConnectionState("pending");
+        } else {
+            setConnectionState("connected");
+        }
+    } else {
+        setConnectionState("syncing");
+    }
+}
+
+let heartbeatInterval = null;
+function startHeartbeat() {
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(async () => {
+        if (CONFIG.demoMode || !CONFIG.scriptUrl || document.hidden || !navigator.onLine) return;
+        try {
+            const res = await fetchWithTimeout(`${CONFIG.scriptUrl}?action=ping&_t=${Date.now()}`, { cache: 'no-store' }, 7000);
+            if (res.ok) {
+                const queue = getOfflineQueue();
+                if (queue.length > 0) {
+                    flushOfflineQueue();
+                } else {
+                    setConnectionState("connected");
+                }
+            } else {
+                setConnectionState("offline");
+            }
+        } catch (e) {
+            setConnectionState("offline");
+        }
+    }, 90000);
+}
+
+function setupNetworkListeners() {
+    window.addEventListener('online', () => {
+        showToast("Conexión a Internet restablecida", "success");
+        setConnectionState("syncing");
+        flushOfflineQueue();
+        loadData(false);
+    });
+
+    window.addEventListener('offline', () => {
+        showToast("Se perdió la conexión a Internet. Modo local activo.", "warning");
+        setConnectionState("offline");
+        updateOfflineBanner();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && navigator.onLine && !CONFIG.demoMode) {
+            const queue = getOfflineQueue();
+            if (queue.length > 0) {
+                flushOfflineQueue();
+            }
+        }
+    });
+
+    if (dom.btnSyncNow) {
+        dom.btnSyncNow.addEventListener('click', () => {
+            flushOfflineQueue();
+        });
+    }
+}
+
+function saveCurrentStateToOfflineCache() {
+    try {
+        localStorage.setItem('audiolend_offline_cache', JSON.stringify({
+            inventory: appState.inventory,
+            students: appState.students,
+            loans: appState.loans,
+            subjects: appState.subjects,
+            categories: appState.categories,
+            timestamp: Date.now()
+        }));
+    } catch (storageErr) {
+        console.warn("Aviso: No se pudo guardar caché local:", storageErr);
+    }
+}
+
+function applyDeliverOptimisticState(loanId, activeItems, itemsPayload, cancelledItems, globalObsVal) {
+    const dateStr = getNowFormatted();
+    if (Array.isArray(activeItems)) {
+        activeItems.forEach(tempItem => {
+            const assigned = (itemsPayload || []).find(p => p.name === tempItem.item);
+            if (tempItem.isNew) {
+                const newLoanRecord = {
+                    id: loanId,
+                    rut: tempItem.rut,
+                    name: tempItem.name,
+                    email: tempItem.email,
+                    item: tempItem.item,
+                    code: assigned ? assigned.code : "Pte. Entrega",
+                    status: "Retirado",
+                    dateOut: tempItem.dateOut,
+                    dateDeliver: dateStr,
+                    dateIn: "",
+                    progRetiro: tempItem.progRetiro,
+                    progDevolucion: tempItem.progDevolucion,
+                    subject: tempItem.subject,
+                    obs: globalObsVal,
+                    obsReturn: "",
+                    daysOverdue: 0
+                };
+                appState.loans.push(newLoanRecord);
+                const invItem = appState.inventory.find(i => i.name === tempItem.item);
+                if (invItem) {
+                    invItem.available = Math.max(0, invItem.available - 1);
+                }
+            } else {
+                const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
+                if (loanItem) {
+                    loanItem.status = "Retirado";
+                    loanItem.code = assigned ? assigned.code : loanItem.code;
+                    loanItem.obs = globalObsVal;
+                    loanItem.dateDeliver = dateStr;
+                }
+            }
+        });
+    }
+
+    if (Array.isArray(cancelledItems)) {
+        cancelledItems.forEach(tempItem => {
+            if (!tempItem.isNew) {
+                const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
+                if (loanItem) {
+                    loanItem.status = "Anulado";
+                    loanItem.code = "Anulado";
+                    const invItem = appState.inventory.find(i => i.name === tempItem.item);
+                    if (invItem) {
+                        invItem.available = Math.min(invItem.total, invItem.available + 1);
+                    }
+                }
+            }
+        });
+    }
+}
+
+function applyReturnOptimisticState(loanId, obsReturnVal) {
+    const dateStr = getNowFormatted();
+    const loanItems = appState.loans.filter(l => l.id === loanId && l.status === "Retirado");
+    if (loanItems.length === 0) return;
+
+    loanItems.forEach(loan => {
+        const days = getDaysOverdue(loan);
+        loan.status = "Devuelto";
+        loan.dateIn = dateStr;
+        loan.daysOverdue = days;
+        loan.obsReturn = obsReturnVal || '';
+
+        const invItem = appState.inventory.find(i => i.name === loan.item);
+        if (invItem) {
+            invItem.available = Math.min(invItem.total, invItem.available + 1);
+        }
+    });
+}
+
+function applyCancelOptimisticState(loanId) {
+    const loanItems = appState.loans.filter(l => l.id === loanId);
+    const activeItems = loanItems.filter(l => l.status === "Solicitado" || l.status === "Retirado");
+    if (activeItems.length === 0) return false;
+
+    activeItems.forEach(loan => {
+        loan.status = "Anulado";
+        if (loan.code === "Pte. Entrega" || !loan.code) {
+            loan.code = "Anulado";
+        }
+        const invItem = appState.inventory.find(i => i.name === loan.item);
+        if (invItem) {
+            invItem.available = Math.min(invItem.total, invItem.available + 1);
+        }
+    });
+    return true;
+}
+
 async function loadData(forceRefresh = false) {
     if (CONFIG.demoMode) {
         if (appState.inventory.length === 0) {
@@ -307,7 +713,7 @@ async function loadData(forceRefresh = false) {
         appState.categories = [...new Set(appState.inventory.map(i => i.category))];
         
         recalculateDemoStock();
-        updateConnectionStatus(true);
+        setConnectionState("demo");
         renderLoansModule();
         renderSubjectsDropdown();
         renderCategoryDropdown();
@@ -326,50 +732,52 @@ async function loadData(forceRefresh = false) {
         
         // --- SWR (Stale-While-Revalidate): Carga instantánea desde caché local ---
         let hasRenderedFromCache = false;
-        if (forceRefresh) {
+        const cachedStr = localStorage.getItem('audiolend_offline_cache');
+        if (cachedStr) {
             try {
-                localStorage.removeItem('audiolend_offline_cache');
-            } catch (e) {}
-        } else {
-            const cachedStr = localStorage.getItem('audiolend_offline_cache');
-            if (cachedStr) {
-                try {
-                    const cachedData = JSON.parse(cachedStr);
-                    if (cachedData && cachedData.inventory && cachedData.inventory.length > 0) {
-                        appState.inventory = groupInventoryItems(cachedData.inventory);
-                        appState.students = cachedData.students || [];
-                        appState.loans = cachedData.loans || [];
-                        appState.subjects = cachedData.subjects || [];
-                        appState.categories = (cachedData.categories && Array.isArray(cachedData.categories))
-                            ? cachedData.categories.map(cleanCategoryName)
-                            : [...new Set(appState.inventory.map(i => i.category))];
-                        
-                        updateConnectionStatus(false);
-                        renderLoansModule();
-                        renderSubjectsDropdown();
-                        renderCategoryDropdown();
-                        
-                        if (appState.isAdminLoggedIn) {
-                            updateAdminDashboard();
-                            renderAdminLoans(appState.activeAdminLoanFilter);
-                        }
-                        hasRenderedFromCache = true;
+                const cachedData = JSON.parse(cachedStr);
+                if (cachedData && cachedData.inventory && cachedData.inventory.length > 0) {
+                    appState.inventory = groupInventoryItems(cachedData.inventory);
+                    appState.students = cachedData.students || [];
+                    appState.loans = cachedData.loans || [];
+                    appState.subjects = cachedData.subjects || [];
+                    appState.categories = (cachedData.categories && Array.isArray(cachedData.categories))
+                        ? cachedData.categories.map(cleanCategoryName)
+                        : [...new Set(appState.inventory.map(i => i.category))];
+                    
+                    renderLoansModule();
+                    renderSubjectsDropdown();
+                    renderCategoryDropdown();
+                    
+                    if (appState.isAdminLoggedIn) {
+                        updateAdminDashboard();
+                        renderAdminLoans(appState.activeAdminLoanFilter);
                     }
-                } catch (cacheErr) {
-                    console.warn("Aviso: No se pudo leer caché offline:", cacheErr);
+                    hasRenderedFromCache = true;
                 }
+            } catch (cacheErr) {
+                console.warn("Aviso: No se pudo leer caché offline:", cacheErr);
             }
         }
         
-        if (forceRefresh || !hasRenderedFromCache) {
-            showToast(forceRefresh ? "Actualizando datos desde Google Sheets..." : "Conectando con base de datos UFRO...", "info");
+        const queue = getOfflineQueue();
+        if (queue.length > 0) {
+            setConnectionState("pending");
+        } else if (hasRenderedFromCache) {
+            setConnectionState("connected");
+        } else {
+            setConnectionState("syncing");
+        }
+        updateOfflineBanner();
+        
+        if (forceRefresh) {
+            showToast("Actualizando datos desde Google Sheets...", "info");
         }
         
         try {
-            updateConnectionStatus(null);
+            setConnectionState("syncing");
             const fetchUrl = `${CONFIG.scriptUrl}?action=getInitData&_t=${Date.now()}&fresh=${forceRefresh ? '1' : '0'}`;
-            const response = await fetch(fetchUrl, { cache: 'no-store' });
-            if (!response.ok) throw new Error("Error en red");
+            const response = await fetchWithRetry(fetchUrl, { cache: 'no-store' }, 1, 1000, 14000);
             
             const data = await response.json();
             if (data.status === "error") throw new Error(data.message);
@@ -382,18 +790,7 @@ async function loadData(forceRefresh = false) {
                 ? data.categories.map(cleanCategoryName)
                 : [...new Set(appState.inventory.map(i => i.category))];
             
-            // Guardar en caché offline para la próxima apertura instantánea
-            try {
-                localStorage.setItem('audiolend_offline_cache', JSON.stringify({
-                    inventory: data.inventory,
-                    students: data.students,
-                    loans: data.loans,
-                    subjects: data.subjects,
-                    categories: appState.categories
-                }));
-            } catch (storageErr) {
-                console.warn("Aviso: Cuota de almacenamiento local excedida:", storageErr);
-            }
+            saveCurrentStateToOfflineCache();
             
             if (data.sheetUrl) {
                 CONFIG.sheetUrl = data.sheetUrl;
@@ -403,7 +800,6 @@ async function loadData(forceRefresh = false) {
                 }
             }
             
-            updateConnectionStatus(false);
             renderLoansModule();
             renderSubjectsDropdown();
             renderCategoryDropdown();
@@ -413,17 +809,27 @@ async function loadData(forceRefresh = false) {
                 renderAdminLoans(appState.activeAdminLoanFilter);
             }
             
+            if (queue.length > 0) {
+                setConnectionState("pending");
+                flushOfflineQueue();
+            } else {
+                setConnectionState("connected");
+            }
+            updateOfflineBanner();
+            
             if (forceRefresh) {
                 showToast("Datos actualizados desde Google Sheets", "success");
             }
         } catch (error) {
-            console.error(error);
-            if (hasRenderedFromCache) {
-                showToast("Modo sin conexión: mostrando datos guardados previamente.", "warning");
-                updateConnectionStatus(false);
+            console.error("Error al cargar datos desde Google Sheets:", error);
+            setConnectionState("offline");
+            updateOfflineBanner();
+            if (hasRenderedFromCache || appState.inventory.length > 0) {
+                if (forceRefresh) {
+                    showToast("Sin conexión directa con Google Sheets. Mostrando datos locales seguros.", "warning");
+                }
             } else {
-                showToast(`Error de conexión: ${error.message || error}. Volviendo a Modo Demo.`, "danger");
-                setDemoMode(true);
+                showToast(`Error de conexión con Google Sheets: ${error.message || "Red no disponible"}.`, "danger");
             }
         }
     }
@@ -456,19 +862,6 @@ function setDemoMode(active) {
     dom.modeToggle.checked = active;
     updateConnectionStatus(active);
     loadData();
-}
-
-function updateConnectionStatus(isDemo) {
-    if (isDemo === true) {
-        dom.connectionStatus.className = "status-indicator demo-active";
-        dom.connectionStatus.querySelector('.status-label').textContent = "Modo Demo Activo";
-    } else if (isDemo === false) {
-        dom.connectionStatus.className = "status-indicator live-active";
-        dom.connectionStatus.querySelector('.status-label').textContent = "Conectado a Google Sheets";
-    } else {
-        dom.connectionStatus.className = "status-indicator";
-        dom.connectionStatus.querySelector('.status-label').textContent = "Sincronizando...";
-    }
 }
 
 // ==========================================
@@ -915,8 +1308,7 @@ function initEventListeners() {
             }
             
             try {
-                const response = await fetch(`${CONFIG.scriptUrl}?action=getInitData`);
-                if (!response.ok) throw new Error("Error en la petición de red.");
+                const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=getInitData&fresh=1&_t=${Date.now()}`, { cache: 'no-store' }, 1, 1000, 15000);
                 const data = await response.json();
                 
                 if (data.status === "error") {
@@ -1232,21 +1624,25 @@ function verifyStudent() {
 }
 
 async function executeVerifyStudentApi(rut) {
-    showToast("Verificando estudiante en AVP Sheets...", "info");
+    showToast("Verificando estudiante en Google Sheets...", "info");
     dom.btnVerifyStudent.disabled = true;
     try {
-        const response = await fetch(`${CONFIG.scriptUrl}?action=checkStudent&rut=${rut}`);
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=checkStudent&rut=${encodeURIComponent(rut)}`, {}, 1, 800, 8000);
         const data = await response.json();
         
         if (data.status === "success" && data.student) {
+            if (!appState.students.some(s => cleanRut(s.rut) === cleanRut(data.student.rut))) {
+                appState.students.push(data.student);
+                saveCurrentStateToOfflineCache();
+            }
             processStudentVerificationResult(data.student);
         } else {
             showToast(data.message || "RUT no registrado.", "danger");
             resetStudentValidation();
         }
     } catch (e) {
-        console.error(e);
-        showToast("Error de red.", "danger");
+        console.error("Error al verificar estudiante:", e);
+        showToast("Error de conexión al verificar RUT con Google Sheets.", "danger");
         resetStudentValidation();
     } finally {
         dom.btnVerifyStudent.disabled = false;
@@ -1512,6 +1908,7 @@ async function processLoanCheckout() {
 
 async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject) {
     showToast("Enviando solicitud a Google Sheets...", "info");
+    if (dom.btnConfirmLoan) dom.btnConfirmLoan.disabled = true;
     try {
         const payload = {
             student: appState.validatedStudent,
@@ -1522,12 +1919,12 @@ async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject
             subject: subject
         };
         
-        const response = await fetch(`${CONFIG.scriptUrl}?action=createLoan`, {
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=createLoan`, {
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        });
+        }, 1, 1200, 16000);
         
         const textData = await response.text();
         let data;
@@ -1536,7 +1933,7 @@ async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject
         } catch (parseErr) {
             console.error("La respuesta del script no es un JSON válido:", textData);
             if (textData.includes("html") || textData.includes("Error") || textData.includes("authorization")) {
-                throw new Error("El script de Google Sheets arrojó un error de ejecución. Ejecuta la función testConnection en el editor de Apps Script para verificar que los permisos de envío estén otorgados.");
+                throw new Error("El script de Google Sheets arrojó un error de ejecución. Verifica la implementación web en Apps Script.");
             }
             throw new Error("Respuesta inválida del servidor.");
         }
@@ -1552,18 +1949,15 @@ async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject
                 progRetiro: progRetiro,
                 progDevolucion: progDevolucion
             });
-            try {
-                localStorage.removeItem('audiolend_offline_cache');
-            } catch (e) {}
-            await loadData(true);
+            loadData(false);
         } else {
             showToast(data.message || "Error al solicitar préstamo.", "danger");
-            dom.btnConfirmLoan.disabled = false;
+            if (dom.btnConfirmLoan) dom.btnConfirmLoan.disabled = false;
         }
     } catch (e) {
-        console.error(e);
-        showToast(`Error de conexión: ${e.message || "Error de red."}`, "danger");
-        dom.btnConfirmLoan.disabled = false;
+        console.error("Error al procesar solicitud:", e);
+        showToast(`Error de conexión al registrar solicitud: ${e.message || "Error de red."}. Por favor reintenta.`, "danger");
+        if (dom.btnConfirmLoan) dom.btnConfirmLoan.disabled = false;
     }
 }
 
@@ -1851,21 +2245,24 @@ async function confirmPhysicalDelivery() {
         }
         
         dom.deliveryModal.classList.add('hidden');
+        applyCancelOptimisticState(loanId);
         
         if (CONFIG.demoMode) {
-            const loanItems = appState.loans.filter(l => l.id === loanId);
-            loanItems.forEach(loan => {
-                loan.status = "Anulado";
-                loan.code = "Anulado";
-                const invItem = appState.inventory.find(i => i.name === loan.item);
-                if (invItem) {
-                    invItem.available = Math.min(invItem.total, invItem.available + 1);
-                }
-            });
             saveDemoState();
-            showToast("Solicitud anulada con éxito y stock liberado.", "info");
-            loadData();
+            showToast("Solicitud anulada con éxito y stock liberado (Modo Demo).", "info");
+            if (appState.isAdminLoggedIn) {
+                updateAdminDashboard();
+                renderAdminLoans(appState.activeAdminLoanFilter);
+            }
+            renderLoansModule();
         } else {
+            saveCurrentStateToOfflineCache();
+            showToast("Solicitud anulada. Sincronizando con Google Sheets...", "info");
+            if (appState.isAdminLoggedIn) {
+                updateAdminDashboard();
+                renderAdminLoans(appState.activeAdminLoanFilter);
+            }
+            renderLoansModule();
             executeCancelApi(loanId);
         }
         return;
@@ -1908,101 +2305,60 @@ async function confirmPhysicalDelivery() {
     console.log("[DEBUG AVP] Confirmando entrega física:", { loanId, itemsPayload, cancelledPayload });
     dom.deliveryModal.classList.add('hidden');
     
+    applyDeliverOptimisticState(loanId, activeItems, itemsPayload, cancelledItems, globalObsVal);
+    
     if (CONFIG.demoMode) {
-        const dateStr = getNowFormatted();
-        
-        // Entregar equipos activos
-        activeItems.forEach(tempItem => {
-            const assigned = itemsPayload.find(p => p.name === tempItem.item);
-            if (tempItem.isNew) {
-                const newLoanRecord = {
-                    id: loanId,
-                    rut: tempItem.rut,
-                    name: tempItem.name,
-                    email: tempItem.email,
-                    item: tempItem.item,
-                    code: assigned ? assigned.code : "Pte. Entrega",
-                    status: "Retirado",
-                    dateOut: tempItem.dateOut,
-                    dateDeliver: dateStr,
-                    dateIn: "",
-                    progRetiro: tempItem.progRetiro,
-                    progDevolucion: tempItem.progDevolucion,
-                    subject: tempItem.subject,
-                    obs: globalObsVal,
-                    obsReturn: "",
-                    daysOverdue: 0
-                };
-                appState.loans.push(newLoanRecord);
-                
-                const invItem = appState.inventory.find(i => i.name === tempItem.item);
-                if (invItem) {
-                    invItem.available = Math.max(0, invItem.available - 1);
-                }
-            } else {
-                const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
-                if (loanItem) {
-                    loanItem.status = "Retirado";
-                    loanItem.code = assigned ? assigned.code : loanItem.code;
-                    loanItem.obs = globalObsVal;
-                    loanItem.dateDeliver = dateStr;
-                }
-            }
-        });
-        
-        // Anular ítems excluidos y devolver stock
-        cancelledItems.forEach(tempItem => {
-            if (!tempItem.isNew) {
-                const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
-                if (loanItem) {
-                    loanItem.status = "Anulado";
-                    loanItem.code = "Anulado";
-                    const invItem = appState.inventory.find(i => i.name === tempItem.item);
-                    if (invItem) {
-                        invItem.available = Math.min(invItem.total, invItem.available + 1);
-                    }
-                }
-            }
-        });
-        
         saveDemoState();
-        showToast(`Retiro físico confirmado. Comprobante enviado a ${appState.tempDeliveryItems[0].email}`, "success");
-        loadData();
+        showToast(`Retiro físico confirmado (Modo Demo).`, "success");
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        renderLoansModule();
     } else {
+        saveCurrentStateToOfflineCache();
+        showToast(`Retiro físico confirmado. Sincronizando con Google Sheets...`, "info");
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        renderLoansModule();
         executeDeliverLoanApi(loanId, itemsPayload, cancelledPayload);
     }
 }
 
 async function executeDeliverLoanApi(loanId, items, cancelledItems) {
-    showToast("Confirmando entrega en Google Sheets...", "info");
+    const payload = {
+        loanId: loanId,
+        items: items,
+        cancelledItems: cancelledItems || [],
+        timestamp: getNowFormatted()
+    };
+    
     try {
-        const payload = {
-            loanId: loanId,
-            items: items,
-            cancelledItems: cancelledItems || [],
-            timestamp: getNowFormatted()
-        };
-        
-        const response = await fetch(`${CONFIG.scriptUrl}?action=deliverLoan`, {
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=deliverLoan`, {
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        });
+        }, 1, 1000, 15000);
         
         const data = await response.json();
         if (data.status === "success") {
-            showToast(data.message || "Retiro registrado con éxito.", "success");
-            try {
-                localStorage.removeItem('audiolend_offline_cache');
-            } catch (e) {}
-            await loadData(true);
+            showToast(data.message || "Retiro registrado con éxito en Google Sheets.", "success");
+            loadData(false);
         } else {
-            showToast(data.message || "Error al registrar entrega.", "danger");
+            console.warn("Aviso del servidor al registrar entrega:", data);
+            showToast(data.message || "Aviso al registrar entrega.", "warning");
         }
     } catch (e) {
-        console.error(e);
-        showToast("Error de conexión.", "danger");
+        console.warn("Error de conexión al entregar préstamo, encolando:", e);
+        addToOfflineQueue({
+            action: 'deliverLoan',
+            payload: payload,
+            description: `Entrega física préstamo #${loanId}`
+        });
+        showToast("Sin conexión: Retiro guardado localmente. Se sincronizará automáticamente cuando vuelva Internet.", "warning");
     }
 }
 
@@ -2048,152 +2404,127 @@ async function confirmReturnCheckout() {
     }
     
     if (CONFIG.demoMode) {
-        const dateStr = getNowFormatted();
         const loanItems = appState.loans.filter(l => l.id === loanId && l.status === "Retirado");
         if (loanItems.length === 0) return;
         
-        const returnedItems = [];
-        loanItems.forEach(loan => {
-            const days = getDaysOverdue(loan);
-            loan.status = "Devuelto";
-            loan.dateIn = dateStr;
-            loan.daysOverdue = days;
-            loan.obsReturn = obsReturnVal;
-            
-            const invItem = appState.inventory.find(i => i.name === loan.item);
-            if (invItem) {
-                invItem.available = Math.min(invItem.total, invItem.available + 1);
-            }
-            returnedItems.push({ name: loan.item, code: loan.code });
-        });
-        
+        applyReturnOptimisticState(loanId, obsReturnVal);
         saveDemoState();
-        
-        // Simulación Email 3 (Devolución)
-        console.log(`[SIMULACIÓN GMAIL 3/3] Enviando Comprobante de Devolución a ${loanItems[0].email}:`, {
-            alumno: loanItems[0].name,
-            equipos: returnedItems,
-            fechaRetorno: dateStr,
-            loanId: loanId,
-            obsReturn: obsReturnVal
-        });
-        
-        showToast(`Devolución exitosa. Comprobante enviado a ${loanItems[0].email}`, "success");
-        await loadData();
-        renderAdminLoans(appState.activeAdminLoanFilter);
+        showToast(`Devolución exitosa (Modo Demo). Comprobante simulado para ${loanItems[0].email}`, "success");
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        renderLoansModule();
     } else {
+        applyReturnOptimisticState(loanId, obsReturnVal);
+        saveCurrentStateToOfflineCache();
+        showToast("Devolución aplicada. Sincronizando con Google Sheets...", "info");
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        renderLoansModule();
         executeReturnApi(loanId, obsReturnVal);
     }
 }
 
 async function executeReturnApi(loanId, obsReturn) {
-    showToast("Procesando devolución en AVP Sheets...", "info");
+    const payload = {
+        loanId: loanId,
+        timestamp: getNowFormatted(),
+        obsReturn: obsReturn || ''
+    };
+    
     try {
-        const payload = {
-            loanId: loanId,
-            timestamp: getNowFormatted(),
-            obsReturn: obsReturn
-        };
-        
-        const response = await fetch(`${CONFIG.scriptUrl}?action=returnLoan`, {
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=returnLoan`, {
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        });
+        }, 1, 1000, 15000);
         
         const data = await response.json();
         if (data.status === "success") {
-            showToast(data.message || "Devolución procesada e email enviado correctamente", "success");
-            try {
-                localStorage.removeItem('audiolend_offline_cache');
-            } catch (e) {}
-            await loadData(true);
-            renderAdminLoans(appState.activeAdminLoanFilter);
+            showToast(data.message || "Devolución procesada e email enviado con éxito.", "success");
+            loadData(false);
         } else {
-            showToast(data.message || "Error al procesar devolución.", "danger");
+            console.warn("Aviso del servidor en devolución:", data);
+            showToast(data.message || "Aviso en devolución.", "warning");
         }
     } catch (e) {
-        console.error(e);
-        showToast("Error de conexión.", "danger");
+        console.warn("Error de conexión al procesar devolución, encolando:", e);
+        addToOfflineQueue({
+            action: 'returnLoan',
+            payload: payload,
+            description: `Devolución préstamo #${loanId}`
+        });
+        showToast("Sin conexión: Devolución guardada localmente. Se sincronizará automáticamente.", "warning");
     }
 }
 
 async function processCancelLoan(loanId) {
-    if (!confirm(`¿Estás seguro de que deseas anular la solicitud/préstamo completa ${loanId}? Esta acción es irreversible y devolverá los equipos al stock.`)) {
+    if (!confirm(`¿Estás seguro de que deseas anular la solicitud/préstamo completa ${loanId}? Esta acción devolverá los equipos al stock.`)) {
         return;
     }
     
+    const activeItems = appState.loans.filter(l => l.id === loanId && (l.status === "Solicitado" || l.status === "Retirado"));
+    if (activeItems.length === 0) {
+        showToast("No se encontraron ítems activos para anular.", "warning");
+        return;
+    }
+    
+    applyCancelOptimisticState(loanId);
+    
     if (CONFIG.demoMode) {
-        const loanItems = appState.loans.filter(l => l.id === loanId);
-        const activeItems = loanItems.filter(l => l.status === "Solicitado" || l.status === "Retirado");
-        if (activeItems.length === 0) {
-            showToast("No se encontraron ítems activos para anular.", "warning");
-            return;
-        }
-        
-        const cancelledItems = [];
-        activeItems.forEach(loan => {
-            const wasRetirado = loan.status === "Retirado";
-            loan.status = "Anulado";
-            if (loan.code === "Pte. Entrega" || !loan.code) {
-                loan.code = "Anulado";
-            }
-            
-            const invItem = appState.inventory.find(i => i.name === loan.item);
-            if (invItem) {
-                invItem.available = Math.min(invItem.total, invItem.available + 1);
-            }
-            cancelledItems.push({ name: loan.item, code: loan.code });
-        });
-        
         saveDemoState();
-        
-        // Simulación Email
-        console.log(`[SIMULACIÓN GMAIL] Enviando Notificación de Anulación a ${activeItems[0].email}:`, {
-            alumno: activeItems[0].name,
-            equipos: cancelledItems,
-            fecha: getNowFormatted(),
-            loanId: loanId
-        });
-        
         showToast("Préstamo anulado con éxito en modo Demo.", "success");
-        await loadData();
-        renderAdminLoans(appState.activeAdminLoanFilter);
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        renderLoansModule();
     } else {
+        saveCurrentStateToOfflineCache();
+        showToast("Anulación aplicada. Sincronizando con Google Sheets...", "info");
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        renderLoansModule();
         executeCancelApi(loanId);
     }
 }
 
 async function executeCancelApi(loanId) {
-    showToast("Procesando anulación en AVP Sheets...", "info");
+    const payload = {
+        loanId: loanId,
+        timestamp: getNowFormatted()
+    };
+    
     try {
-        const payload = {
-            loanId: loanId,
-            timestamp: getNowFormatted()
-        };
-        
-        const response = await fetch(`${CONFIG.scriptUrl}?action=cancelLoan`, {
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=cancelLoan`, {
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        });
+        }, 1, 1000, 15000);
         
         const data = await response.json();
         if (data.status === "success") {
-            showToast("Préstamo anulado con éxito", "success");
-            try {
-                localStorage.removeItem('audiolend_offline_cache');
-            } catch (e) {}
-            await loadData(true);
-            renderAdminLoans(appState.activeAdminLoanFilter);
+            showToast("Préstamo anulado con éxito en Google Sheets.", "success");
+            loadData(false);
         } else {
-            showToast(data.message || "Error al anular el préstamo.", "danger");
+            console.warn("Aviso del servidor en anulación:", data);
+            showToast(data.message || "Aviso al anular préstamo.", "warning");
         }
     } catch (e) {
-        console.error(e);
-        showToast("Error de conexión.", "danger");
+        console.warn("Error de conexión al anular préstamo, encolando:", e);
+        addToOfflineQueue({
+            action: 'cancelLoan',
+            payload: payload,
+            description: `Anulación préstamo #${loanId}`
+        });
+        showToast("Sin conexión: Anulación guardada localmente. Se sincronizará automáticamente.", "warning");
     }
 }
 
@@ -2374,12 +2705,12 @@ async function executeSendContactEmailApi() {
     
     try {
         showToast("Enviando correo oficial con formato voucher...", "info");
-        const response = await fetch(`${CONFIG.scriptUrl}?action=sendContactEmail`, {
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=sendContactEmail`, {
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        });
+        }, 1, 1000, 16000);
         
         const data = await response.json();
         if (data.status === "success") {
@@ -3349,12 +3680,12 @@ async function saveEquipmentConfig() {
     } else {
         showToast("Agregando equipo a Google Sheets...", "info");
         try {
-            const response = await fetch(`${CONFIG.scriptUrl}?action=addEquipment`, {
+            const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=addEquipment`, {
                 method: 'POST',
                 mode: 'cors',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify(payload)
-            });
+            }, 1, 1000, 15000);
             const data = await response.json();
             if (data.status === "success") {
                 showToast(`Equipo "${name}" agregado con éxito.`, "success");
@@ -3416,12 +3747,12 @@ async function saveStudentConfig() {
     } else {
         showToast("Registrando estudiante...", "info");
         try {
-            const response = await fetch(`${CONFIG.scriptUrl}?action=addStudent`, {
+            const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=addStudent`, {
                 method: 'POST',
                 mode: 'cors',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify(payload)
-            });
+            }, 1, 1000, 15000);
             const data = await response.json();
             if (data.status === "success") {
                 showToast(`Estudiante registrado correctamente`, "success");
@@ -3451,12 +3782,12 @@ async function deleteEquipmentConfig(id, name) {
     } else {
         showToast("Eliminando equipo...", "info");
         try {
-            const response = await fetch(`${CONFIG.scriptUrl}?action=deleteEquipment`, {
+            const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=deleteEquipment`, {
                 method: 'POST',
                 mode: 'cors',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify({ name })
-            });
+            }, 1, 1000, 15000);
             const data = await response.json();
             if (data.status === "success") {
                 showToast("Equipo eliminado con éxito.", "success");
@@ -3466,7 +3797,7 @@ async function deleteEquipmentConfig(id, name) {
             }
         } catch (e) {
             console.error(e);
-            showToast("Error.", "danger");
+            showToast("Error de red al eliminar equipo.", "danger");
         }
     }
 }
@@ -3482,12 +3813,12 @@ async function deleteStudentConfig(rut, name) {
     } else {
         showToast("Eliminando estudiante...", "info");
         try {
-            const response = await fetch(`${CONFIG.scriptUrl}?action=deleteStudent`, {
+            const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=deleteStudent`, {
                 method: 'POST',
                 mode: 'cors',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify({ rut })
-            });
+            }, 1, 1000, 15000);
             const data = await response.json();
             if (data.status === "success") {
                 showToast("Estudiante eliminado con éxito.", "success");
@@ -3497,7 +3828,7 @@ async function deleteStudentConfig(rut, name) {
             }
         } catch (e) {
             console.error(e);
-            showToast("Error.", "danger");
+            showToast("Error de red al eliminar estudiante.", "danger");
         }
     }
 }
@@ -3520,12 +3851,12 @@ async function toggleStudentSanction(rut, name, blocked) {
         } else {
             showToast("Procesando levantamiento de sanción...", "info");
             try {
-                const response = await fetch(`${CONFIG.scriptUrl}?action=removeSanction`, {
+                const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=removeSanction`, {
                     method: 'POST',
                     mode: 'cors',
                     headers: { 'Content-Type': 'text/plain' },
                     body: JSON.stringify({ rut })
-                });
+                }, 1, 1000, 15000);
                 const data = await response.json();
                 if (data.status === "success") {
                     showToast(data.message || "Sanción levantada con éxito.", "success");
@@ -3535,7 +3866,7 @@ async function toggleStudentSanction(rut, name, blocked) {
                 }
             } catch (e) {
                 console.error(e);
-                showToast("Error de conexión.", "danger");
+                showToast("Error de conexión al levantar sanción.", "danger");
             }
         }
     } else {
@@ -3559,12 +3890,12 @@ async function toggleStudentSanction(rut, name, blocked) {
         } else {
             showToast("Procesando bloqueo...", "info");
             try {
-                const response = await fetch(`${CONFIG.scriptUrl}?action=applySanction`, {
+                const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=applySanction`, {
                     method: 'POST',
                     mode: 'cors',
                     headers: { 'Content-Type': 'text/plain' },
                     body: JSON.stringify({ rut, reason: finalReason, date: dateNow })
-                });
+                }, 1, 1000, 15000);
                 const data = await response.json();
                 if (data.status === "success") {
                     showToast(data.message || "Estudiante bloqueado con éxito.", "success");
@@ -3574,7 +3905,7 @@ async function toggleStudentSanction(rut, name, blocked) {
                 }
             } catch (e) {
                 console.error(e);
-                showToast("Error de conexión.", "danger");
+                showToast("Error de conexión al bloquear estudiante.", "danger");
             }
         }
     }

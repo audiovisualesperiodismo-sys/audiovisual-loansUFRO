@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=36.0">
+    <link rel="stylesheet" href="styles.css?v=37.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -96,6 +96,17 @@
                     </button>
                 </div>
             </header>
+
+            <!-- Barra de Alerta / Sincronización Fuera de Línea -->
+            <div id="offline-sync-banner" class="offline-sync-banner hidden">
+                <div class="offline-sync-content">
+                    <i data-lucide="cloud-off" class="offline-sync-icon"></i>
+                    <span id="offline-sync-text">Trabajando sin conexión a Google Sheets</span>
+                </div>
+                <button type="button" class="btn-sync-now" id="btn-sync-now" title="Intentar sincronizar cambios ahora">
+                    <i data-lucide="refresh-cw"></i> Sincronizar ahora
+                </button>
+            </div>
 
             <!-- ================= SECCIÓN DE PRÉSTAMOS ================= -->
             <section id="section-loans" class="tab-content active">
@@ -819,6 +830,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=36.0"></script>
+    <script src="app.js?v=37.0"></script>
 </body>
 </html>

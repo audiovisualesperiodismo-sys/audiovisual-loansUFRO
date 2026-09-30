@@ -238,6 +238,18 @@ body {
     animation: pulse 2s infinite;
 }
 
+.status-indicator.offline-active .status-dot {
+    background-color: var(--danger);
+    box-shadow: 0 0 10px var(--danger);
+    animation: pulse 1.5s infinite;
+}
+
+.status-indicator.pending-active .status-dot {
+    background-color: #f59e0b;
+    box-shadow: 0 0 10px #f59e0b;
+    animation: pulse 1.5s infinite;
+}
+
 .status-label {
     font-size: 0.78rem;
     font-weight: 600;
@@ -248,6 +260,60 @@ body {
     0% { transform: scale(0.95); opacity: 0.7; }
     50% { transform: scale(1.1); opacity: 1; }
     100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+/* Barra de Alerta y Sincronización Offline */
+.offline-sync-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(217, 119, 6, 0.12) 100%);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #b45309;
+    padding: 10px 18px;
+    border-radius: var(--border-radius-md);
+    margin: 0 0 20px 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    gap: 12px;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08);
+    transition: all 0.3s ease;
+}
+
+.offline-sync-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.offline-sync-icon {
+    width: 18px;
+    height: 18px;
+    color: #d97706;
+    flex-shrink: 0;
+}
+
+.btn-sync-now {
+    background: #d97706;
+    color: #ffffff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: var(--border-radius-sm);
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+    box-shadow: 0 2px 6px rgba(217, 119, 6, 0.25);
+    white-space: nowrap;
+}
+
+.btn-sync-now:hover {
+    background: #b45309;
+    transform: translateY(-1px);
 }
 
 /* ==========================================

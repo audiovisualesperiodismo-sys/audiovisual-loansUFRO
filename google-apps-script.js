@@ -217,12 +217,22 @@ function doGet(e) {
 
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    autoUpgradeHeaders(ss);
+    
+    // Optimización de velocidad: Solo verificar cabeceras si no han sido verificadas recientemente o si se solicita refresh explícito
+    const scriptCache = CacheService.getScriptCache();
+    const isFresh = Boolean(e && e.parameter && (e.parameter.fresh === "1" || e.parameter.fresh === "true"));
+    const headersChecked = scriptCache.get("avp_headers_ok");
+    if (!headersChecked || isFresh) {
+      autoUpgradeHeaders(ss);
+      try { scriptCache.put("avp_headers_ok", "1", 21600); } catch(err) {} // 6 horas
+    }
     
     if (action === "getInitData") {
-      const isFresh = (e && e.parameter && (e.parameter.fresh === "1" || e.parameter._t));
       responseData = getCachedInitData(ss, isFresh);
     } 
+    else if (action === "ping") {
+      responseData = { status: "success", timestamp: new Date().toISOString(), server: "online" };
+    }
     else if (action === "checkStudent") {
       const rut = e.parameter.rut;
       const student = findStudentByRut(ss, rut);
@@ -251,7 +261,7 @@ function doGet(e) {
 function clearInitDataCache() {
   try {
     const cache = CacheService.getScriptCache();
-    const keys = ["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_cat", "avp_url"];
+    const keys = ["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_cat", "avp_url", "avp_headers_ok"];
     cache.removeAll(keys);
     keys.forEach(k => {
       try { cache.remove(k); } catch(err) {}
@@ -372,7 +382,11 @@ function doPost(e) {
   
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    autoUpgradeHeaders(ss);
+    const scriptCache = CacheService.getScriptCache();
+    if (!scriptCache.get("avp_headers_ok")) {
+      autoUpgradeHeaders(ss);
+      try { scriptCache.put("avp_headers_ok", "1", 21600); } catch(err) {}
+    }
     const action = e.parameter.action;
     const postData = JSON.parse(e.postData.contents);
     
