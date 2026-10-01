@@ -146,7 +146,112 @@ function autoUpgradeHeaders(ss) {
       }
     }
   }
+  
+  // Ejecutar auto-curación de préstamos con ítems o códigos duplicados espurios y restaurar stock
+  healDuplicateLoanRows(ss);
 }
+
+// ==========================================
+// AUTO-CURACIÓN DE DUPLICADOS HISTÓRICOS
+// ==========================================
+function healDuplicateLoanRows(ss) {
+  try {
+    const loanSheet = ss.getSheetByName("Préstamos");
+    const invSheet = ss.getSheetByName("Inventario");
+    if (!loanSheet || !invSheet) return;
+    
+    const loanValues = loanSheet.getDataRange().getValues();
+    if (loanValues.length <= 1) return;
+    
+    const loanHeaders = loanValues[0].map(normalizeHeader);
+    const { idIdx, itemIdx, codeIdx, statusIdx, obsIdx } = getLoanHeaderIndices(loanHeaders);
+    if (idIdx === -1 || itemIdx === -1 || codeIdx === -1 || statusIdx === -1) return;
+    
+    const invValues = invSheet.getDataRange().getValues();
+    const invHeaders = invValues[0].map(normalizeHeader);
+    const { nameIdx: invNameIdx, totalIdx: invTotalIdx, availableIdx: invDispIdx } = getInventoryHeaderIndices(invHeaders);
+    
+    let anyHealed = false;
+    
+    for (let i = 1; i < loanValues.length; i++) {
+      const rowId = loanValues[i][idIdx] ? loanValues[i][idIdx].toString().trim() : "";
+      if (!rowId) continue;
+      
+      const rawItems = loanValues[i][itemIdx] ? loanValues[i][itemIdx].toString() : "";
+      const rawCodes = loanValues[i][codeIdx] ? loanValues[i][codeIdx].toString() : "";
+      const rawStatuses = loanValues[i][statusIdx] ? loanValues[i][statusIdx].toString() : "";
+      const rawObs = (obsIdx !== -1 && loanValues[i][obsIdx]) ? loanValues[i][obsIdx].toString() : "";
+      
+      const itemsList = rawItems.split("\n").map(function(x) { return x.trim(); }).filter(Boolean);
+      const count = itemsList.length;
+      if (count <= 1) continue;
+      
+      const codesList = splitCellValues(rawCodes, count);
+      const statusesList = splitCellValues(rawStatuses, count);
+      const obsList = splitCellValues(rawObs, count);
+      
+      const seen = new Set();
+      const newItems = [];
+      const newCodes = [];
+      const newStatuses = [];
+      const newObs = [];
+      let rowChanged = false;
+      
+      for (let k = 0; k < count; k++) {
+        const itName = itemsList[k];
+        const itCode = codesList[k] || "";
+        const itStatus = statusesList[k] || "";
+        const itO = obsList[k] || "";
+        
+        const cleanCode = itCode.toUpperCase().trim();
+        const isEligible = cleanCode && cleanCode !== "PTE. ENTREGA" && cleanCode !== "ANULADO";
+        const key = itName.toUpperCase().trim() + "___" + cleanCode;
+        
+        if (isEligible && seen.has(key)) {
+          // Es un duplicado idéntico! Purgar y devolver stock a inventario
+          rowChanged = true;
+          anyHealed = true;
+          Logger.log("Auto-curación: purgado ítem duplicado en " + rowId + ": " + itName + " [" + itCode + "]");
+          
+          if (itStatus === "Retirado") {
+            for (let j = 1; j < invValues.length; j++) {
+              if (invValues[j][invNameIdx].toString().toUpperCase().trim() === itName.toUpperCase().trim()) {
+                const totalVal = parseInt(invValues[j][invTotalIdx]) || 0;
+                const rawDisp = invValues[j][invDispIdx];
+                const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+                const newDisp = Math.min(totalVal, currentDisp + 1);
+                invSheet.getRange(j + 1, invDispIdx + 1).setValue(newDisp);
+                invValues[j - 1][invDispIdx] = newDisp;
+                break;
+              }
+            }
+          }
+        } else {
+          if (isEligible) seen.add(key);
+          newItems.push(itName);
+          newCodes.push(itCode);
+          newStatuses.push(itStatus);
+          newObs.push(itO);
+        }
+      }
+      
+      if (rowChanged) {
+        loanSheet.getRange(i + 1, itemIdx + 1).setValue(newItems.join("\n"));
+        loanSheet.getRange(i + 1, codeIdx + 1).setValue(newCodes.join("\n"));
+        loanSheet.getRange(i + 1, statusIdx + 1).setValue(newStatuses.join("\n"));
+        if (obsIdx !== -1) loanSheet.getRange(i + 1, obsIdx + 1).setValue(newObs.join("\n"));
+      }
+    }
+    
+    if (anyHealed) {
+      SpreadsheetApp.flush();
+      clearInitDataCache();
+    }
+  } catch (err) {
+    Logger.log("Error en auto-curación de duplicados: " + err.toString());
+  }
+}
+
 
 // ==========================================
 // CONTROLADOR DE PETICIONES GET (LECTURA)
@@ -774,6 +879,7 @@ function getLoansData(ss) {
       datesInList = new Array(expectedCount).fill(rawDateIn);
     }
     
+    const seenInRow = new Set();
     for (let k = 0; k < expectedCount; k++) {
       let itemCode = codesList[k] || "Pte. Entrega";
       let itemStatus = statusesList[k] || "Solicitado";
@@ -783,6 +889,18 @@ function getLoansData(ss) {
       if (itemCode.toUpperCase() === "ANULADO") {
         itemStatus = "Anulado";
         itemDateIn = "";
+      }
+      
+      const cleanCode = itemCode.toUpperCase().trim();
+      const isEligibleCode = cleanCode && cleanCode !== "PTE. ENTREGA" && cleanCode !== "ANULADO";
+      const dupKey = itemsList[k].toUpperCase().trim() + "___" + cleanCode;
+      
+      if (isEligibleCode && itemStatus === "Retirado" && seenInRow.has(dupKey)) {
+        // Ignorar fila duplicada idéntica en este préstamo para evitar artefactos en cliente
+        continue;
+      }
+      if (isEligibleCode) {
+        seenInRow.add(dupKey);
       }
       
       loans.push({
@@ -842,6 +960,16 @@ function executeCreateLoan(ss, payload) {
   }
   
   try {
+    const scriptCache = CacheService.getScriptCache();
+    const requestId = payload.requestId || (payload.student ? (payload.student.rut + "_" + (payload.items || []).map(function(i) { return i.name; }).sort().join("_") + "_" + (payload.progRetiro || "")) : null);
+    if (requestId) {
+      const cachedResponse = scriptCache.get("avp_req_" + requestId);
+      if (cachedResponse) {
+        Logger.log("Petición duplicada detectada y prevenida para requestId: " + requestId);
+        return JSON.parse(cachedResponse);
+      }
+    }
+
     const invSheet = ss.getSheetByName("Inventario");
     let loanSheet = ss.getSheetByName("Préstamos");
     
@@ -854,6 +982,39 @@ function executeCreateLoan(ss, payload) {
     const loanHeaders = loanValues[0].map(normalizeHeader);
     const { idIdx, rutIdx, nameIdx, emailIdx, itemIdx, codeIdx, dateOutIdx, dateInIdx, statusIdx, progRetiroIdx, progDevolucionIdx, subjectIdx, obsIdx } = getLoanHeaderIndices(loanHeaders);
     
+    const student = payload.student;
+    const items = payload.items;
+    const timestamp = payload.timestamp;
+    const progRetiro = payload.progRetiro;
+    const progDevolucion = payload.progDevolucion;
+    const subject = payload.subject;
+
+    // Prevención de duplicados si la última fila corresponde exactamente al mismo alumno y solicitud
+    if (loanValues.length > 1 && rutIdx !== -1) {
+      const lastRow = loanValues[loanValues.length - 1];
+      const lastRut = lastRow[rutIdx] ? lastRow[rutIdx].toString().replace(/[^0-9kK]/g, '').toLowerCase() : '';
+      const newRut = student && student.rut ? student.rut.replace(/[^0-9kK]/g, '').toLowerCase() : '';
+      const lastProg = progRetiroIdx !== -1 && lastRow[progRetiroIdx] ? lastRow[progRetiroIdx].toString().trim() : '';
+      const newProg = progRetiro ? progRetiro.toString().trim() : '';
+      const lastItems = itemIdx !== -1 && lastRow[itemIdx] ? lastRow[itemIdx].toString().trim() : '';
+      const newItems = items ? items.map(function(x) { return x.name; }).join("\n").trim() : '';
+      
+      if (lastRut && lastRut === newRut && lastProg === newProg && lastItems === newItems) {
+        const existingLoanId = idIdx !== -1 ? lastRow[idIdx].toString() : "Solicitud registrada";
+        Logger.log("Mitigada inserción duplicada en la misma ventana de tiempo para préstamo: " + existingLoanId);
+        const dupResult = {
+          status: "success",
+          loanId: existingLoanId,
+          message: "Solicitud ya registrada previamente.",
+          duplicated: true
+        };
+        if (requestId) {
+          try { scriptCache.put("avp_req_" + requestId, JSON.stringify(dupResult), 300); } catch(err) {}
+        }
+        return dupResult;
+      }
+    }
+    
     let nextIdNumber = 1001;
     if (loanValues.length > 1 && idIdx !== -1) {
       const lastIdVal = loanValues[loanValues.length - 1][idIdx].toString();
@@ -862,13 +1023,6 @@ function executeCreateLoan(ss, payload) {
         nextIdNumber = parseInt(numMatch[0]) + 1;
       }
     }
-    
-    const student = payload.student;
-    const items = payload.items;
-    const timestamp = payload.timestamp;
-    const progRetiro = payload.progRetiro;
-    const progDevolucion = payload.progDevolucion;
-    const subject = payload.subject;
     
     // Obtener y mapear Inventario
     const invValues = invSheet.getDataRange().getValues();
@@ -938,14 +1092,19 @@ function executeCreateLoan(ss, payload) {
     
     loanSheet.appendRow(newRow);
     SpreadsheetApp.flush();
+    clearInitDataCache();
     
+    const successResult = { status: "success", loanId: loanId, message: "Solicitud registrada con éxito." };
     try {
       sendSolicitudEmail(student, items, timestamp, progRetiro, progDevolucion, subject, loanId);
     } catch (emailError) {
       Logger.log("ERROR al enviar email de solicitud: " + emailError.toString());
-      return { status: "success", loanId: loanId, message: "Solicitud registrada con éxito. (Nota: No se pudo enviar el correo de comprobación por falta de destinatario o configuración)." };
+      successResult.message = "Solicitud registrada con éxito. (Nota: No se pudo enviar el correo de comprobación por falta de destinatario o configuración).";
     }
-    return { status: "success", loanId: loanId, message: "Solicitud registrada con éxito." };
+    if (requestId) {
+      try { scriptCache.put("avp_req_" + requestId, JSON.stringify(successResult), 300); } catch(err) {}
+    }
+    return successResult;
   } catch (error) {
     return { status: "error", message: error.toString() };
   } finally {
@@ -1001,11 +1160,39 @@ function executeDeliverLoan(ss, payload) {
     const matchedIndices = new Set();
     const extraItems = [];
     
+    // 0. Comprobación temprana de Idempotencia:
+    // Si la entrega ya se procesó previamente (todos los ítems en Retirado/Devuelto/Anulado)
+    // y no hay ítems marcados como nuevos (isNew === true)
+    const hasExplicitNew = items.some(function(it) { return it.isNew === true; });
+    const allAlreadyDelivered = expectedCount > 0 && currentStatuses.every(function(s) {
+      return s === "Retirado" || s === "Devuelto" || s === "Anulado";
+    });
+    
+    if (!hasExplicitNew && allAlreadyDelivered) {
+      const allItemsAccounted = items.every(function(payloadItem) {
+        return currentItems.some(function(ci, idx) {
+          return ci.toUpperCase().trim() === payloadItem.name.toUpperCase().trim() && currentStatuses[idx] === "Retirado";
+        });
+      });
+      if (allItemsAccounted) {
+        clearInitDataCache();
+        return {
+          status: "success",
+          loanId: loanId,
+          message: "Esta entrega ya se encontraba registrada previamente en la planilla.",
+          alreadyProcessed: true
+        };
+      }
+    }
+    
     // First, process matches for existing requested items
-    items.forEach(payloadItem => {
+    items.forEach(function(payloadItem) {
       let matched = false;
+      const cleanPayloadName = payloadItem.name.toUpperCase().trim();
+      
+      // 1. Prioridad: Buscar coincidencia en ítems en estado "Solicitado" o vacío
       for (let k = 0; k < expectedCount; k++) {
-        if (!matchedIndices.has(k) && currentItems[k].toUpperCase().trim() === payloadItem.name.toUpperCase().trim() && (currentStatuses[k] === "Solicitado" || currentStatuses[k] === "")) {
+        if (!matchedIndices.has(k) && currentItems[k].toUpperCase().trim() === cleanPayloadName && (currentStatuses[k] === "Solicitado" || currentStatuses[k] === "")) {
           currentCodes[k] = payloadItem.code;
           currentStatuses[k] = "Retirado";
           currentObs[k] = payloadItem.obs || "";
@@ -1015,9 +1202,31 @@ function executeDeliverLoan(ss, payload) {
           break;
         }
       }
+      
+      // 2. Si no hubo coincidencia pendiente, verificar si este ítem ya estaba "Retirado" (reintento o re-entrega)
+      //    Si NO es explícitamente nuevo (isNew !== true), asociar al ítem ya existente sin duplicar ni descontar stock
+      if (!matched && !payloadItem.isNew) {
+        for (let k = 0; k < expectedCount; k++) {
+          if (!matchedIndices.has(k) && currentItems[k].toUpperCase().trim() === cleanPayloadName && currentStatuses[k] === "Retirado") {
+            if (payloadItem.code && currentCodes[k] !== payloadItem.code) {
+              currentCodes[k] = payloadItem.code;
+            }
+            if (payloadItem.obs) {
+              currentObs[k] = payloadItem.obs;
+            }
+            matchedIndices.add(k);
+            matched = true;
+            updatedRowsCount++;
+            break;
+          }
+        }
+      }
+      
+      // 3. Solo si es explícitamente nuevo (isNew === true) o no existía de ninguna forma en la solicitud original, es un extraItem:
       if (!matched) {
-        // It's a new item added on the fly!
-        extraItems.push(payloadItem);
+        if (payloadItem.isNew || !currentItems.some(function(ci) { return ci.toUpperCase().trim() === cleanPayloadName; })) {
+          extraItems.push(payloadItem);
+        }
       }
     });
     
@@ -1081,20 +1290,73 @@ function executeDeliverLoan(ss, payload) {
       updatedRowsCount++;
     }
     
-    if (updatedRowsCount === 0) throw new Error("No se encontraron registros de solicitud pendientes de entrega.");
+    // 4. Sanitización y Desduplicación Estricta Intra-Préstamo:
+    // Si un mismo equipo físico con el MISMO código de inventario aparece repetido más de una vez con estado "Retirado",
+    // eliminar la duplicación de la fila y RESTAURAR el stock descontado de más en Inventario.
+    const seenEquipCode = new Set();
+    const cleanItems = [];
+    const cleanCodes = [];
+    const cleanStatuses = [];
+    const cleanObs = [];
+    
+    for (let k = 0; k < currentItems.length; k++) {
+      const itName = currentItems[k];
+      const itCode = currentCodes[k] || "";
+      const itStatus = currentStatuses[k] || "";
+      const itObs = currentObs[k] || "";
+      
+      const cleanCode = itCode.toUpperCase().trim();
+      const isEligible = cleanCode && cleanCode !== "PTE. ENTREGA" && cleanCode !== "ANULADO";
+      const key = itName.toUpperCase().trim() + "___" + cleanCode;
+      
+      if (isEligible && itStatus === "Retirado" && seenEquipCode.has(key)) {
+        // Es un duplicado idéntico erróneo! Purgar y devolver stock a inventario
+        Logger.log("Duplicado detectado y purgado en entrega de " + loanId + ": " + itName + " (" + itCode + "). Restaurando stock.");
+        for (let j = 1; j < invValues.length; j++) {
+          if (invValues[j][invNameIdx].toString().toUpperCase().trim() === itName.toUpperCase().trim()) {
+            const totalVal = parseInt(invValues[j][invTotalIdx]) || 0;
+            const rawDisp = invValues[j][invDispIdx];
+            const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+            const newDisp = Math.min(totalVal, currentDisp + 1);
+            invSheet.getRange(j + 1, invDispIdx + 1).setValue(newDisp);
+            invValues[j - 1][invDispIdx] = newDisp;
+            break;
+          }
+        }
+      } else {
+        if (isEligible) seenEquipCode.add(key);
+        cleanItems.push(itName);
+        cleanCodes.push(itCode);
+        cleanStatuses.push(itStatus);
+        cleanObs.push(itObs);
+      }
+    }
+    
+    if (updatedRowsCount === 0) {
+      const alreadyDone = cleanStatuses.some(function(s) { return s === "Retirado" || s === "Devuelto"; });
+      if (alreadyDone) {
+        clearInitDataCache();
+        return {
+          status: "success",
+          message: "Esta entrega ya se encontraba registrada previamente en la planilla.",
+          alreadyProcessed: true
+        };
+      }
+      throw new Error("No se encontraron registros de solicitud pendientes de entrega para la solicitud #" + loanId);
+    }
     
     // Save back
     let overallStatus = "Solicitado";
-    if (currentStatuses.every(s => s === "Anulado")) {
+    if (cleanStatuses.every(function(s) { return s === "Anulado"; })) {
       overallStatus = "Anulado";
-    } else if (currentStatuses.some(s => s === "Retirado")) {
+    } else if (cleanStatuses.some(function(s) { return s === "Retirado"; })) {
       overallStatus = "Retirado";
     }
     
-    if (itemIdx !== -1) loanSheet.getRange(rowIndex, itemIdx + 1).setValue(currentItems.join("\n"));
-    if (codeIdx !== -1) loanSheet.getRange(rowIndex, codeIdx + 1).setValue(currentCodes.join("\n"));
-    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue(currentStatuses.join("\n"));
-    if (obsIdx !== -1) loanSheet.getRange(rowIndex, obsIdx + 1).setValue(currentObs.join("\n"));
+    if (itemIdx !== -1) loanSheet.getRange(rowIndex, itemIdx + 1).setValue(cleanItems.join("\n"));
+    if (codeIdx !== -1) loanSheet.getRange(rowIndex, codeIdx + 1).setValue(cleanCodes.join("\n"));
+    if (statusIdx !== -1) loanSheet.getRange(rowIndex, statusIdx + 1).setValue(cleanStatuses.join("\n"));
+    if (obsIdx !== -1) loanSheet.getRange(rowIndex, obsIdx + 1).setValue(cleanObs.join("\n"));
     
     if (dateDeliverIdx !== -1) {
       loanSheet.getRange(rowIndex, dateDeliverIdx + 1).setValue(timestamp); // Date of delivery in dedicated column
@@ -1102,6 +1364,7 @@ function executeDeliverLoan(ss, payload) {
       loanSheet.getRange(rowIndex, dateOutIdx + 1).setValue(timestamp); // Fallback: overwrite request date
     }
     SpreadsheetApp.flush();
+    clearInitDataCache();
     
     const extrasInfo = extraItems.length > 0 ? extraItems.map(function(x) { return x.name; }).join(", ") : "";
     const cancInfo = newlyCancelledItems.length > 0 ? newlyCancelledItems.join(", ") : "";
@@ -1228,7 +1491,17 @@ function executeReturnLoan(ss, payload) {
       }
     }
     
-    if (returnedItems.length === 0) throw new Error("No se encontraron registros de préstamo activos para devolver.");
+    if (returnedItems.length === 0) {
+      const alreadyReturned = currentStatuses.every(function(s) { return s === "Devuelto" || s === "Anulado"; });
+      if (alreadyReturned) {
+        return {
+          status: "success",
+          message: "Este préstamo ya figuraba como devuelto en la planilla.",
+          alreadyProcessed: true
+        };
+      }
+      throw new Error("No se encontraron registros de préstamo activos para devolver.");
+    }
     
     // Save back
     const formattedDatesIn = currentDatesIn.map(function(d) { return d ? formatDate(d) : ""; }).join("\n");
@@ -1266,6 +1539,7 @@ function executeReturnLoan(ss, payload) {
       loanSheet.getRange(rowIndex, daysOverdueIdx + 1).setValue(daysOverdue);
     }
     SpreadsheetApp.flush();
+    clearInitDataCache();
     
     const returnedInfo = returnedItems.map(function(x) { return x.name + " (" + x.code + ")"; }).join(" | ");
     const msg = "Devolución procesada. Equipos: " + returnedInfo;
@@ -1373,7 +1647,17 @@ function executeCancelLoan(ss, payload) {
       }
     }
     
-    if (cancelledItems.length === 0) throw new Error("No se encontraron solicitudes o préstamos activos para anular.");
+    if (cancelledItems.length === 0) {
+      const alreadyCancelled = currentStatuses.every(function(s) { return s === "Anulado"; });
+      if (alreadyCancelled) {
+        return {
+          status: "success",
+          message: "Esta solicitud ya figuraba como anulada en la planilla.",
+          alreadyProcessed: true
+        };
+      }
+      throw new Error("No se encontraron solicitudes o préstamos activos para anular.");
+    }
     
     // Save back
     let overallStatus = "Solicitado";
@@ -1391,6 +1675,7 @@ function executeCancelLoan(ss, payload) {
       loanSheet.getRange(rowIndex, dateInIdx + 1).setValue("");
     }
     SpreadsheetApp.flush();
+    clearInitDataCache();
     
     try {
       sendAnulacionEmail(studentName, studentEmail, cancelledItems, timestamp, loanId);

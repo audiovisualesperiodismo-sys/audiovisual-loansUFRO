@@ -59,6 +59,7 @@ const dom = {
     offlineSyncBanner: document.getElementById('offline-sync-banner'),
     offlineSyncText: document.getElementById('offline-sync-text'),
     btnSyncNow: document.getElementById('btn-sync-now'),
+    btnClearQueue: document.getElementById('btn-clear-queue'),
     categoryTabs: document.getElementById('category-tabs-list'),
     equipmentGrid: document.getElementById('equipment-grid-container'),
     selectedItems: document.getElementById('selected-items-container'),
@@ -378,7 +379,7 @@ async function flushOfflineQueue() {
         return;
     }
 
-    const queue = getOfflineQueue();
+    let queue = getOfflineQueue();
     if (queue.length === 0) {
         updateOfflineBanner();
         return;
@@ -389,14 +390,24 @@ async function flushOfflineQueue() {
     if (dom.btnSyncNow) {
         dom.btnSyncNow.disabled = true;
         dom.btnSyncNow.innerHTML = '<i data-lucide="loader" class="spin"></i> Sincronizando...';
-        if (window.lucide) lucide.createIcons();
+    }
+    if (dom.btnClearQueue) {
+        dom.btnClearQueue.disabled = true;
+    }
+    if (window.lucide) lucide.createIcons();
+
+    let syncedCount = 0;
+    let discardedCount = 0;
+
+    // Purgar operaciones obsoletas (> 24 horas)
+    const freshQueue = queue.filter(item => !item.createdAt || (Date.now() - item.createdAt <= 86400000));
+    if (freshQueue.length !== queue.length) {
+        queue = freshQueue;
+        saveOfflineQueue(queue);
     }
 
-    const remainingQueue = [...queue];
-    let syncedCount = 0;
-
-    for (let i = 0; i < queue.length; i++) {
-        const op = queue[i];
+    for (const op of [...queue]) {
+        op.attempts = (op.attempts || 0) + 1;
         try {
             const url = `${CONFIG.scriptUrl}?action=${op.action}`;
             const res = await fetchWithRetry(url, {
@@ -404,24 +415,41 @@ async function flushOfflineQueue() {
                 mode: 'cors',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify(op.payload)
-            }, 1, 1000, 15000);
+            }, 1, 1000, 18000);
 
             const json = await res.json();
-            if (json.status === "success" || json.status === "warning") {
+            const msg = (json.message || "").toLowerCase();
+
+            if (json.status === "success" || json.status === "warning" || json.alreadyProcessed) {
                 syncedCount++;
-                remainingQueue.shift();
-                saveOfflineQueue(remainingQueue);
+                queue = queue.filter(item => item.id !== op.id);
+                saveOfflineQueue(queue);
             } else {
-                console.warn(`Operación en cola ${op.action} falló con respuesta:`, json);
-                if (json.message && (json.message.includes("no encontrado") || json.message.includes("no existe"))) {
-                    remainingQueue.shift();
-                    saveOfflineQueue(remainingQueue);
+                console.warn(`Operación en cola ${op.action} retornó:`, json);
+                const isIrrecoverable = msg.includes("ya se encontraba") ||
+                                       msg.includes("ya fue") ||
+                                       msg.includes("ya figuraba") ||
+                                       msg.includes("no se encontraron registros") ||
+                                       msg.includes("no se encontró") ||
+                                       msg.includes("no existe") ||
+                                       msg.includes("no hay stock") ||
+                                       msg.includes("duplicad") ||
+                                       (op.createdAt && (Date.now() - op.createdAt > 86400000)) ||
+                                       op.attempts >= 3;
+
+                if (isIrrecoverable) {
+                    console.log(`Depurando operación en cola ${op.action} (${op.id}): ${json.message}`);
+                    discardedCount++;
+                    queue = queue.filter(item => item.id !== op.id);
+                    saveOfflineQueue(queue);
                 } else {
+                    saveOfflineQueue(queue);
                     break;
                 }
             }
         } catch (netErr) {
             console.warn(`Error de red al sincronizar cola (${op.action}):`, netErr);
+            saveOfflineQueue(queue);
             break;
         }
     }
@@ -430,15 +458,21 @@ async function flushOfflineQueue() {
     if (dom.btnSyncNow) {
         dom.btnSyncNow.disabled = false;
         dom.btnSyncNow.innerHTML = '<i data-lucide="refresh-cw"></i> Sincronizar ahora';
-        if (window.lucide) lucide.createIcons();
     }
+    if (dom.btnClearQueue) {
+        dom.btnClearQueue.disabled = false;
+    }
+    if (window.lucide) lucide.createIcons();
 
     if (syncedCount > 0) {
-        showToast(`Se sincronizaron ${syncedCount} cambios pendientes con Google Sheets`, "success");
+        showToast(`Se sincronizaron ${syncedCount} cambios con Google Sheets`, "success");
+        loadData(false);
+    } else if (discardedCount > 0) {
+        showToast(`Se depuraron ${discardedCount} cambio(s) que ya figuraban en Google Sheets`, "info");
         loadData(false);
     }
 
-    if (remainingQueue.length === 0) {
+    if (queue.length === 0) {
         setConnectionState("connected");
     } else {
         setConnectionState("pending");
@@ -466,6 +500,9 @@ function updateOfflineBanner() {
         if (dom.btnSyncNow) {
             dom.btnSyncNow.style.display = isOffline ? 'none' : 'inline-flex';
         }
+        if (dom.btnClearQueue) {
+            dom.btnClearQueue.style.display = 'inline-flex';
+        }
     } else if (isOffline) {
         dom.offlineSyncBanner.classList.remove('hidden');
         if (dom.offlineSyncText) {
@@ -473,6 +510,9 @@ function updateOfflineBanner() {
         }
         if (dom.btnSyncNow) {
             dom.btnSyncNow.style.display = 'none';
+        }
+        if (dom.btnClearQueue) {
+            dom.btnClearQueue.style.display = 'none';
         }
     } else {
         dom.offlineSyncBanner.classList.add('hidden');
@@ -580,6 +620,20 @@ function setupNetworkListeners() {
     if (dom.btnSyncNow) {
         dom.btnSyncNow.addEventListener('click', () => {
             flushOfflineQueue();
+        });
+    }
+
+    if (dom.btnClearQueue) {
+        dom.btnClearQueue.addEventListener('click', () => {
+            const queue = getOfflineQueue();
+            if (queue.length === 0) return;
+            if (confirm(`¿Deseas descartar los ${queue.length} cambio(s) pendientes de la cola local? Usa esta opción si ya se reflejan en Google Sheets o si están atascados.`)) {
+                saveOfflineQueue([]);
+                setConnectionState("connected");
+                updateOfflineBanner();
+                showToast("Cola de cambios locales descartada.", "info");
+                loadData(false);
+            }
         });
     }
 }
@@ -777,7 +831,7 @@ async function loadData(forceRefresh = false) {
         try {
             setConnectionState("syncing");
             const fetchUrl = `${CONFIG.scriptUrl}?action=getInitData&_t=${Date.now()}&fresh=${forceRefresh ? '1' : '0'}`;
-            const response = await fetchWithRetry(fetchUrl, { cache: 'no-store' }, 1, 1000, 14000);
+            const response = await fetchWithRetry(fetchUrl, { cache: 'no-store' }, 2, 1200, 24000);
             
             const data = await response.json();
             if (data.status === "error") throw new Error(data.message);
@@ -1908,9 +1962,18 @@ async function processLoanCheckout() {
 
 async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject) {
     showToast("Enviando solicitud a Google Sheets...", "info");
-    if (dom.btnConfirmLoan) dom.btnConfirmLoan.disabled = true;
+    if (dom.btnConfirmLoan) {
+        dom.btnConfirmLoan.disabled = true;
+        dom.btnConfirmLoan.innerHTML = '<i data-lucide="loader" class="spin"></i> Procesando solicitud...';
+        if (window.lucide) lucide.createIcons();
+    }
+    
+    // Identificador único de transacción para deduplicación estricta en servidor
+    const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 7);
+    
     try {
         const payload = {
+            requestId: requestId,
             student: appState.validatedStudent,
             items: loanItems,
             timestamp: getNowFormatted(),
@@ -1919,12 +1982,13 @@ async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject
             subject: subject
         };
         
-        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=createLoan`, {
+        // Timeout de 32 segundos sin reintentos ciegos para evitar duplicación de solicitudes
+        const response = await fetchWithTimeout(`${CONFIG.scriptUrl}?action=createLoan`, {
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        }, 1, 1200, 16000);
+        }, 32000);
         
         const textData = await response.text();
         let data;
@@ -1958,6 +2022,11 @@ async function executeCheckoutApi(loanItems, progRetiro, progDevolucion, subject
         console.error("Error al procesar solicitud:", e);
         showToast(`Error de conexión al registrar solicitud: ${e.message || "Error de red."}. Por favor reintenta.`, "danger");
         if (dom.btnConfirmLoan) dom.btnConfirmLoan.disabled = false;
+    } finally {
+        if (dom.btnConfirmLoan) {
+            dom.btnConfirmLoan.innerHTML = '<i data-lucide="send"></i> Enviar Solicitud de Préstamo';
+            if (window.lucide) lucide.createIcons();
+        }
     }
 }
 
@@ -2794,13 +2863,24 @@ function groupLoansById(loans) {
         if (loan.obsReturn && !groups[loan.id].obsReturn) {
             groups[loan.id].obsReturn = loan.obsReturn;
         }
-        groups[loan.id].items.push({
-            name: loan.item,
-            code: loan.code,
-            status: loan.status,
-            dateIn: loan.dateIn,
-            obs: loan.obs || ""
-        });
+        
+        // Deduplicación en cliente: evitar mostrar dos veces el mismo ítem con el mismo código físico en la misma solicitud
+        const itemCodeTrimmed = (loan.code || '').trim().toUpperCase();
+        const isDedupeEligible = itemCodeTrimmed && itemCodeTrimmed !== 'PTE. ENTREGA' && itemCodeTrimmed !== 'ANULADO';
+        const alreadyInGroup = isDedupeEligible && groups[loan.id].items.some(it => 
+            it.name.trim().toUpperCase() === (loan.item || '').trim().toUpperCase() && 
+            (it.code || '').trim().toUpperCase() === itemCodeTrimmed
+        );
+        
+        if (!alreadyInGroup) {
+            groups[loan.id].items.push({
+                name: loan.item,
+                code: loan.code,
+                status: loan.status,
+                dateIn: loan.dateIn,
+                obs: loan.obs || ""
+            });
+        }
     });
     
     return Object.values(groups).map(group => {

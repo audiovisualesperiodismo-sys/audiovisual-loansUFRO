@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=37.0">
+    <link rel="stylesheet" href="styles.css?v=39.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -103,9 +103,14 @@
                     <i data-lucide="cloud-off" class="offline-sync-icon"></i>
                     <span id="offline-sync-text">Trabajando sin conexión a Google Sheets</span>
                 </div>
-                <button type="button" class="btn-sync-now" id="btn-sync-now" title="Intentar sincronizar cambios ahora">
-                    <i data-lucide="refresh-cw"></i> Sincronizar ahora
-                </button>
+                <div class="offline-sync-actions">
+                    <button type="button" class="btn-sync-now" id="btn-sync-now" title="Intentar sincronizar cambios ahora">
+                        <i data-lucide="refresh-cw"></i> Sincronizar ahora
+                    </button>
+                    <button type="button" class="btn-clear-queue" id="btn-clear-queue" title="Descartar cambios pendientes si ya se reflejan en la planilla">
+                        Descartar
+                    </button>
+                </div>
             </div>
 
             <!-- ================= SECCIÓN DE PRÉSTAMOS ================= -->
@@ -830,6 +835,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=37.0"></script>
+    <script src="app.js?v=39.0"></script>
 </body>
 </html>
