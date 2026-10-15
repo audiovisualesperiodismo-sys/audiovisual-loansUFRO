@@ -156,6 +156,9 @@ function autoUpgradeHeaders(ss) {
 // ==========================================
 function healDuplicateLoanRows(ss) {
   try {
+    const scriptCache = CacheService.getScriptCache();
+    if (scriptCache.get("avp_healed_v2")) return;
+    
     const loanSheet = ss.getSheetByName("Préstamos");
     const invSheet = ss.getSheetByName("Inventario");
     if (!loanSheet || !invSheet) return;
@@ -247,6 +250,7 @@ function healDuplicateLoanRows(ss) {
       SpreadsheetApp.flush();
       clearInitDataCache();
     }
+    try { scriptCache.put("avp_healed_v2", "1", 86400); } catch(e) {}
   } catch (err) {
     Logger.log("Error en auto-curación de duplicados: " + err.toString());
   }
@@ -366,7 +370,7 @@ function doGet(e) {
 function clearInitDataCache() {
   try {
     const cache = CacheService.getScriptCache();
-    const keys = ["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_cat", "avp_url", "avp_headers_ok"];
+    const keys = ["avp_inv", "avp_st", "avp_ln", "avp_sb", "avp_cat", "avp_url"];
     cache.removeAll(keys);
     keys.forEach(k => {
       try { cache.remove(k); } catch(err) {}

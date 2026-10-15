@@ -298,9 +298,9 @@ body {
     background: #d97706;
     color: #ffffff;
     border: none;
-    padding: 6px 14px;
+    padding: 7px 14px;
     border-radius: var(--border-radius-sm);
-    font-size: 0.78rem;
+    font-size: 0.8rem;
     font-weight: 700;
     cursor: pointer;
     display: inline-flex;
@@ -314,6 +314,55 @@ body {
 .btn-sync-now:hover {
     background: #b45309;
     transform: translateY(-1px);
+}
+
+.offline-sync-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.btn-clear-queue {
+    background: transparent;
+    color: #92400e;
+    border: 1px solid rgba(180, 83, 9, 0.4);
+    padding: 6px 12px;
+    border-radius: var(--border-radius-sm);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-clear-queue:hover {
+    background: rgba(180, 83, 9, 0.1);
+    color: #78350f;
+}
+
+@media (max-width: 600px) {
+    .offline-sync-banner {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: center;
+        gap: 12px;
+        padding: 12px 14px;
+    }
+    .offline-sync-content {
+        justify-content: center;
+        text-align: center;
+    }
+    .offline-sync-actions {
+        display: flex;
+        width: 100%;
+        gap: 8px;
+    }
+    .btn-sync-now, .btn-clear-queue {
+        flex: 1;
+        justify-content: center;
+        text-align: center;
+    }
 }
 
 /* ==========================================
@@ -1400,6 +1449,292 @@ input:checked + .slider:before {
     box-shadow: 0 2px 4px rgba(0,0,0,0.02);
 }
 
+/* BUSCADOR DE EQUIPOS EN PANEL ADMIN */
+.admin-loans-toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.admin-equipment-search-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    padding: 3px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.filter-select-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.filter-select-icon {
+    position: absolute;
+    left: 8px;
+    width: 13px;
+    height: 13px;
+    color: var(--text-muted);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.select-filter-admin {
+    appearance: none;
+    -webkit-appearance: none;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 5px 24px 5px 26px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+    max-width: 195px;
+    min-width: 125px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.select-filter-admin:hover {
+    border-color: var(--primary);
+}
+
+.select-filter-admin:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.12);
+}
+
+.btn-clear-filter {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.btn-clear-filter:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+}
+
+/* FICHA DE DISPONIBILIDAD Y POSESIÓN DEL EQUIPO */
+.admin-equipment-status-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: var(--border-radius-md);
+    padding: 16px 18px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+    animation: fadeIn 0.2s ease-in-out;
+}
+
+.aesc-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.aesc-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.aesc-category-badge {
+    background: rgba(79, 70, 229, 0.08);
+    color: var(--primary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.aesc-name {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.aesc-stock-pills {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.aesc-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 6px;
+}
+
+.aesc-pill.total { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+.aesc-pill.available { background: rgba(16, 185, 129, 0.1); color: #059669; border: 1px solid rgba(16, 185, 129, 0.25); }
+.aesc-pill.borrowed { background: rgba(2, 132, 199, 0.1); color: #0284c7; border: 1px solid rgba(2, 132, 199, 0.25); }
+.aesc-pill.pending { background: rgba(245, 158, 11, 0.1); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.25); }
+
+.aesc-body {
+    padding-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.aesc-section-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin: 0 0 4px 0;
+}
+
+.aesc-borrowers-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+    gap: 10px;
+}
+
+.aesc-borrower-item {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: all 0.2s;
+}
+
+.aesc-borrower-item:hover {
+    border-color: #cbd5e1;
+    background: #ffffff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.aesc-borrower-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.aesc-borrower-name {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.aesc-borrower-rut {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-family: monospace;
+}
+
+.aesc-borrower-dates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 0.74rem;
+    color: var(--text-secondary);
+}
+
+.aesc-borrower-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.aesc-empty-banner {
+    background: rgba(16, 185, 129, 0.06);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #065f46;
+    font-size: 0.82rem;
+}
+
+.aesc-codes-inventory {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.75rem;
+    padding-top: 10px;
+    border-top: 1px dashed #e2e8f0;
+}
+
+.aesc-code-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.aesc-code-chip.chip-free {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+}
+
+.aesc-code-chip.chip-busy {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.match-highlight {
+    background: rgba(79, 70, 229, 0.08);
+    color: var(--primary);
+    font-weight: 700;
+    border-left: 3px solid var(--primary);
+    padding-left: 4px;
+    border-radius: 3px;
+}
+
+.match-code-highlight {
+    border-color: var(--primary) !important;
+    font-weight: 800 !important;
+    color: var(--primary) !important;
+    box-shadow: 0 0 0 1px var(--primary);
+}
+
 /* SUBTAB 2: Estadísticas */
 .metrics-grid {
     display: grid;
@@ -1863,6 +2198,30 @@ input:checked + .slider:before {
     .input-group-row {
         flex-direction: column;
         gap: 0;
+    }
+
+    .admin-loans-toolbar {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .admin-equipment-search-container {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+
+    .filter-select-wrapper {
+        width: 100%;
+    }
+
+    .select-filter-admin {
+        width: 100%;
+        max-width: 100%;
     }
     
     .filter-group {

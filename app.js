@@ -38,6 +38,8 @@ let appState = {
     isAdminLoggedIn: false,
     activeAdminSubtab: "admin-tab-loans",
     activeAdminLoanFilter: "all",
+    adminLoanCategoryFilter: "",
+    adminLoanEquipmentFilter: "",
     currentDeliveryLoanId: null,
     currentReturnLoanId: null,
     currentContactLoanId: null,
@@ -89,6 +91,10 @@ const dom = {
     adminTabContents: document.querySelectorAll('.admin-tab-content'),
     adminLoansTableBody: document.getElementById('admin-loans-table-body'),
     adminLoanFilterBtns: document.querySelectorAll('.btn-filter'),
+    adminFilterCategory: document.getElementById('admin-filter-category'),
+    adminFilterEquipment: document.getElementById('admin-filter-equipment'),
+    btnClearEquipmentFilter: document.getElementById('btn-clear-equipment-filter'),
+    adminEquipmentStatusCard: document.getElementById('admin-equipment-status-card'),
     formAddEquipment: document.getElementById('form-add-equipment'),
     eqCategory: document.getElementById('eq-category'),
     newCategoryWrapper: document.getElementById('new-category-wrapper'),
@@ -415,9 +421,21 @@ async function flushOfflineQueue() {
                 mode: 'cors',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify(op.payload)
-            }, 1, 1000, 18000);
+            }, 1, 1500, 35000);
 
-            const json = await res.json();
+            const rawText = await res.text();
+            let json;
+            try {
+                json = JSON.parse(rawText);
+            } catch (parseError) {
+                console.warn(`Respuesta no es JSON válido al sincronizar (${op.action}):`, rawText);
+                if (rawText.includes("<!DOCTYPE") || rawText.includes("<html") || rawText.includes("Error") || rawText.includes("authorization")) {
+                    json = { status: "error", message: "Error interno del script de Google Sheets" };
+                } else {
+                    throw parseError;
+                }
+            }
+
             const msg = (json.message || "").toLowerCase();
 
             if (json.status === "success" || json.status === "warning" || json.alreadyProcessed) {
@@ -435,7 +453,7 @@ async function flushOfflineQueue() {
                                        msg.includes("no hay stock") ||
                                        msg.includes("duplicad") ||
                                        (op.createdAt && (Date.now() - op.createdAt > 86400000)) ||
-                                       op.attempts >= 3;
+                                       op.attempts >= 2;
 
                 if (isIrrecoverable) {
                     console.log(`Depurando operación en cola ${op.action} (${op.id}): ${json.message}`);
@@ -449,6 +467,11 @@ async function flushOfflineQueue() {
             }
         } catch (netErr) {
             console.warn(`Error de red al sincronizar cola (${op.action}):`, netErr);
+            if (op.attempts >= 2) {
+                console.log(`Depurando operación tras ${op.attempts} intentos fallidos de red: ${op.action}`);
+                discardedCount++;
+                queue = queue.filter(item => item.id !== op.id);
+            }
             saveOfflineQueue(queue);
             break;
         }
@@ -468,8 +491,10 @@ async function flushOfflineQueue() {
         showToast(`Se sincronizaron ${syncedCount} cambios con Google Sheets`, "success");
         loadData(false);
     } else if (discardedCount > 0) {
-        showToast(`Se depuraron ${discardedCount} cambio(s) que ya figuraban en Google Sheets`, "info");
+        showToast(`Se depuraron ${discardedCount} cambio(s) pendientes de la cola local`, "info");
         loadData(false);
+    } else if (queue.length > 0) {
+        showToast("No se pudo conectar con Google Sheets tras reintentar. Revisa la conexión o pulsa 'Descartar' si la acción ya se realizó.", "warning");
     }
 
     if (queue.length === 0) {
@@ -774,6 +799,7 @@ async function loadData(forceRefresh = false) {
         
         if (appState.isAdminLoggedIn) {
             updateAdminDashboard();
+            renderAdminLoanEquipmentFilters();
             renderAdminLoans(appState.activeAdminLoanFilter);
         }
         showToast("Datos demo activos (AVP UFRO)", "info");
@@ -805,6 +831,7 @@ async function loadData(forceRefresh = false) {
                     
                     if (appState.isAdminLoggedIn) {
                         updateAdminDashboard();
+                        renderAdminLoanEquipmentFilters();
                         renderAdminLoans(appState.activeAdminLoanFilter);
                     }
                     hasRenderedFromCache = true;
@@ -860,6 +887,7 @@ async function loadData(forceRefresh = false) {
             
             if (appState.isAdminLoggedIn) {
                 updateAdminDashboard();
+                renderAdminLoanEquipmentFilters();
                 renderAdminLoans(appState.activeAdminLoanFilter);
             }
             
@@ -974,6 +1002,7 @@ function initEventListeners() {
             if (target === 'admin-tab-stats') {
                 setTimeout(() => updateCharts(), 100);
             } else if (target === 'admin-tab-loans') {
+                renderAdminLoanEquipmentFilters();
                 renderAdminLoans(appState.activeAdminLoanFilter);
                 if (!CONFIG.demoMode) {
                     loadData(true);
@@ -993,6 +1022,36 @@ function initEventListeners() {
             renderAdminLoans(filterValue);
         });
     });
+
+    if (dom.adminFilterCategory) {
+        dom.adminFilterCategory.addEventListener('change', (e) => {
+            appState.adminLoanCategoryFilter = e.target.value;
+            renderAdminEquipmentSelectOptions();
+            appState.adminLoanEquipmentFilter = dom.adminFilterEquipment ? dom.adminFilterEquipment.value : "";
+            updateClearEquipmentFilterBtn();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        });
+    }
+
+    if (dom.adminFilterEquipment) {
+        dom.adminFilterEquipment.addEventListener('change', (e) => {
+            appState.adminLoanEquipmentFilter = e.target.value;
+            updateClearEquipmentFilterBtn();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        });
+    }
+
+    if (dom.btnClearEquipmentFilter) {
+        dom.btnClearEquipmentFilter.addEventListener('click', () => {
+            appState.adminLoanCategoryFilter = "";
+            appState.adminLoanEquipmentFilter = "";
+            if (dom.adminFilterCategory) dom.adminFilterCategory.value = "";
+            renderAdminEquipmentSelectOptions();
+            if (dom.adminFilterEquipment) dom.adminFilterEquipment.value = "";
+            updateClearEquipmentFilterBtn();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        });
+    }
     
     dom.formAddEquipment.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -2410,7 +2469,7 @@ async function executeDeliverLoanApi(loanId, items, cancelledItems) {
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        }, 1, 1000, 15000);
+        }, 1, 1500, 35000);
         
         const data = await response.json();
         if (data.status === "success") {
@@ -2510,7 +2569,7 @@ async function executeReturnApi(loanId, obsReturn) {
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        }, 1, 1000, 15000);
+        }, 1, 1500, 35000);
         
         const data = await response.json();
         if (data.status === "success") {
@@ -2576,7 +2635,7 @@ async function executeCancelApi(loanId) {
             mode: 'cors',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
-        }, 1, 1000, 15000);
+        }, 1, 1500, 35000);
         
         const data = await response.json();
         if (data.status === "success") {
@@ -2893,6 +2952,282 @@ function groupLoansById(loans) {
     });
 }
 
+// ==========================================
+// FILTROS DE EQUIPOS Y FICHA DE POSESIÓN (ADMIN)
+// ==========================================
+
+function updateClearEquipmentFilterBtn() {
+    if (!dom.btnClearEquipmentFilter) return;
+    const hasFilter = Boolean(appState.adminLoanCategoryFilter || appState.adminLoanEquipmentFilter);
+    if (hasFilter) {
+        dom.btnClearEquipmentFilter.classList.remove('hidden');
+    } else {
+        dom.btnClearEquipmentFilter.classList.add('hidden');
+    }
+}
+
+function renderAdminLoanEquipmentFilters() {
+    if (!dom.adminFilterCategory || !dom.adminFilterEquipment) return;
+    
+    // Obtener categorías únicas presentes en el inventario
+    const catCounts = {};
+    appState.inventory.forEach(item => {
+        const cat = cleanCategoryName(item.category);
+        if (cat) catCounts[cat] = (catCounts[cat] || 0) + 1;
+    });
+    
+    const rawCategories = Object.keys(catCounts);
+    // Ordenar con Cámaras de primero
+    const sortedCategories = [...rawCategories].sort((a, b) => {
+        const normA = a.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        const normB = b.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        if (normA === "camaras") return -1;
+        if (normB === "camaras") return 1;
+        return a.localeCompare(b);
+    });
+    
+    // Guardar selección previa
+    const currentCat = appState.adminLoanCategoryFilter || dom.adminFilterCategory.value || "";
+    
+    dom.adminFilterCategory.innerHTML = '<option value="">Todas las categorías</option>';
+    sortedCategories.forEach(cat => {
+        const opt = document.createElement('option');
+        opt.value = cat;
+        opt.textContent = `${cat} (${catCounts[cat]})`;
+        if (cat.toLowerCase() === currentCat.toLowerCase()) {
+            opt.selected = true;
+            appState.adminLoanCategoryFilter = cat;
+        }
+        dom.adminFilterCategory.appendChild(opt);
+    });
+    
+    renderAdminEquipmentSelectOptions();
+    updateClearEquipmentFilterBtn();
+}
+
+function renderAdminEquipmentSelectOptions() {
+    if (!dom.adminFilterEquipment) return;
+    
+    const selectedCat = appState.adminLoanCategoryFilter;
+    const currentEq = appState.adminLoanEquipmentFilter || dom.adminFilterEquipment.value || "";
+    
+    let candidateItems = appState.inventory;
+    if (selectedCat) {
+        const normCat = selectedCat.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        candidateItems = candidateItems.filter(item => {
+            const itemCat = cleanCategoryName(item.category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            return itemCat === normCat;
+        });
+    }
+    
+    // Obtener nombres únicos de equipos ordenados alfabéticamente
+    const uniqueEqNames = [...new Set(candidateItems.map(i => (i.name || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    
+    dom.adminFilterEquipment.innerHTML = '<option value="">Todos los equipos</option>';
+    let eqStillExists = false;
+    
+    uniqueEqNames.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        if (name.toLowerCase() === currentEq.toLowerCase()) {
+            opt.selected = true;
+            eqStillExists = true;
+        }
+        dom.adminFilterEquipment.appendChild(opt);
+    });
+    
+    if (!eqStillExists && currentEq !== "") {
+        appState.adminLoanEquipmentFilter = "";
+        dom.adminFilterEquipment.value = "";
+    }
+    
+    updateClearEquipmentFilterBtn();
+}
+
+function renderAdminEquipmentStatusCard() {
+    if (!dom.adminEquipmentStatusCard) return;
+    
+    const eqName = (appState.adminLoanEquipmentFilter || "").trim();
+    if (!eqName) {
+        dom.adminEquipmentStatusCard.classList.add('hidden');
+        dom.adminEquipmentStatusCard.innerHTML = '';
+        return;
+    }
+    
+    // Buscar equipo en inventario
+    const invItem = appState.inventory.find(i => (i.name || '').toLowerCase() === eqName.toLowerCase()) || {
+        name: eqName,
+        category: appState.adminLoanCategoryFilter || 'Equipo',
+        total: 0,
+        available: 0,
+        codes: []
+    };
+    
+    // Préstamos directos con este equipo
+    const matchingLoans = appState.loans.filter(l => 
+        l.item && l.item.trim().toLowerCase() === eqName.toLowerCase()
+    );
+    
+    // Alumnos que lo tienen actualmente en su poder (Retirado)
+    const activeLoans = matchingLoans.filter(l => l.status === "Retirado");
+    // Solicitudes pendientes de entrega (Solicitado)
+    const pendingLoans = matchingLoans.filter(l => l.status === "Solicitado");
+    
+    // Agrupar préstamos activos por RUT o código para visualización limpia
+    let borrowersHtml = '';
+    if (activeLoans.length > 0) {
+        borrowersHtml = `
+            <div class="aesc-section">
+                <div class="aesc-section-title">
+                    <i data-lucide="user-check" style="width:14px; height:14px; color:var(--primary);"></i>
+                    Alumnos en posesión del equipo actualmente (${activeLoans.length})
+                </div>
+                <div class="aesc-borrowers-list">
+                    ${activeLoans.map(loan => {
+                        const overdue = getDaysOverdue(loan);
+                        let statusBadge = '';
+                        if (overdue > 0) {
+                            statusBadge = `<span class="table-badge danger" style="background: rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.25); font-size:0.7rem; font-weight:700;"><i data-lucide="alert-triangle" style="width:10px; height:10px;"></i> +${overdue} d atraso</span>`;
+                        } else {
+                            statusBadge = `<span class="table-badge success" style="background: rgba(16,185,129,0.1); color:#10b981; border:1px solid rgba(16,185,129,0.25); font-size:0.7rem; font-weight:700;"><i data-lucide="clock" style="width:10px; height:10px;"></i> Al día</span>`;
+                        }
+                        
+                        const codeBadge = loan.code 
+                            ? `<span class="loan-code-badge" style="font-size:0.72rem; font-weight:800; background:#f0f9ff; color:#0369a1; border:1px solid #bae6fd;">Cód: ${loan.code}</span>` 
+                            : `<span class="loan-code-badge" style="font-size:0.72rem; color:var(--text-secondary);">S/C</span>`;
+                            
+                        return `
+                            <div class="aesc-borrower-item">
+                                <div class="aesc-borrower-header">
+                                    <div>
+                                        <div class="aesc-borrower-name">${loan.name}</div>
+                                        <div class="aesc-borrower-rut">${loan.rut} ${loan.email ? `• ${loan.email}` : ''}</div>
+                                    </div>
+                                    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">
+                                        ${codeBadge}
+                                        ${statusBadge}
+                                    </div>
+                                </div>
+                                <div class="aesc-borrower-dates">
+                                    <span><strong>Retirado:</strong> ${formatDisplayDate(loan.dateDeliver || loan.dateOut)}</span>
+                                    <span><strong>Devolución:</strong> ${loan.progDevolucion ? formatDisplayDate(loan.progDevolucion) : '-'}</span>
+                                </div>
+                                <div class="aesc-borrower-actions">
+                                    <button type="button" class="btn btn-sm btn-contact-loan" data-loan-id="${loan.id}" style="background:rgba(2, 132, 199, 0.08); border:1px solid rgba(2, 132, 199, 0.25); color:#0284c7; padding:4px 8px; font-size:0.72rem; font-weight:600; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+                                        <i data-lucide="mail" style="width:12px; height:12px;"></i> Contactar Alumno
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-return-loan" data-loan-id="${loan.id}" style="background:rgba(16, 185, 129, 0.08); border:1px solid rgba(16, 185, 129, 0.25); color:#10b981; padding:4px 8px; font-size:0.72rem; font-weight:600; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+                                        <i data-lucide="rotate-ccw" style="width:12px; height:12px;"></i> Registrar Devolución
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    } else {
+        borrowersHtml = `
+            <div class="aesc-empty-banner">
+                <i data-lucide="check-circle-2" style="width:24px; height:24px; flex-shrink:0; color:#10b981;"></i>
+                <div>
+                    <strong>Equipo 100% disponible en Pañol (Sin préstamos activos en este momento)</strong>
+                    <div style="font-size:0.75rem; color:#047857; margin-top:2px;">No hay ningún alumno que tenga actualmente este equipo en su poder.</div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Solicitudes pendientes de retiro (Solicitado)
+    let pendingHtml = '';
+    if (pendingLoans.length > 0) {
+        pendingHtml = `
+            <div class="aesc-section" style="margin-top:4px;">
+                <div class="aesc-section-title" style="color:#d97706;">
+                    <i data-lucide="calendar" style="width:14px; height:14px; color:#d97706;"></i>
+                    Solicitudes pendientes de retiro físico (${pendingLoans.length})
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                    ${pendingLoans.map(p => `
+                        <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:6px 10px; font-size:0.74rem; display:inline-flex; align-items:center; gap:8px;">
+                            <strong>${p.name}</strong> (${p.rut})
+                            <span style="color:#92400e;">F. Retiro: ${p.progRetiro ? formatDisplayDate(p.progRetiro) : '-'}</span>
+                            <button type="button" class="btn-deliver-loan" data-loan-id="${p.id}" style="background:var(--primary); color:#fff; border:none; border-radius:4px; padding:3px 8px; font-size:0.68rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:3px;">
+                                <i data-lucide="check-square" style="width:11px; height:11px;"></i> Entregar
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    // Mapeo de inventario físico (Códigos)
+    let codesHtml = '';
+    if (invItem.codes && Array.isArray(invItem.codes) && invItem.codes.length > 0) {
+        codesHtml = `
+            <div class="aesc-codes-inventory">
+                <span style="font-weight:700; color:var(--text-secondary); margin-right:4px;">Estado de códigos de inventario:</span>
+                ${invItem.codes.map(code => {
+                    const activeLoan = activeLoans.find(l => l.code && l.code.trim().toUpperCase() === code.trim().toUpperCase());
+                    if (activeLoan) {
+                        return `<span class="aesc-code-chip chip-busy" title="En poder de ${activeLoan.name} (${activeLoan.rut})"><i data-lucide="user" style="width:11px; height:11px;"></i> ${code}: Prestado (${activeLoan.name.split(' ')[0]})</span>`;
+                    } else {
+                        return `<span class="aesc-code-chip chip-free" title="Disponible en pañol"><i data-lucide="check" style="width:11px; height:11px;"></i> ${code}: En Pañol</span>`;
+                    }
+                }).join('')}
+            </div>
+        `;
+    }
+    
+    dom.adminEquipmentStatusCard.innerHTML = `
+        <div class="aesc-header">
+            <div class="aesc-title-group">
+                <span class="aesc-category-badge">${cleanCategoryName(invItem.category)}</span>
+                <h4 class="aesc-name">${invItem.name}</h4>
+            </div>
+            <div class="aesc-stock-pills">
+                <span class="aesc-pill total">Total: <strong>${invItem.total}</strong></span>
+                <span class="aesc-pill available">En Pañol: <strong>${invItem.available}</strong></span>
+                <span class="aesc-pill borrowed">Prestados: <strong>${activeLoans.length}</strong></span>
+                ${pendingLoans.length > 0 ? `<span class="aesc-pill pending">Solicitados: <strong>${pendingLoans.length}</strong></span>` : ''}
+            </div>
+        </div>
+        <div class="aesc-body">
+            ${borrowersHtml}
+            ${pendingHtml}
+            ${codesHtml}
+        </div>
+    `;
+    
+    dom.adminEquipmentStatusCard.classList.remove('hidden');
+    
+    // Delegar eventos de los botones dentro de la card
+    dom.adminEquipmentStatusCard.querySelectorAll('.btn-contact-loan').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = e.currentTarget.getAttribute('data-loan-id');
+            openContactModal(id);
+        });
+    });
+    
+    dom.adminEquipmentStatusCard.querySelectorAll('.btn-return-loan').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = e.currentTarget.getAttribute('data-loan-id');
+            openReturnModal(id);
+        });
+    });
+    
+    dom.adminEquipmentStatusCard.querySelectorAll('.btn-deliver-loan').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = e.currentTarget.getAttribute('data-loan-id');
+            openDeliveryModal(id);
+        });
+    });
+    
+    lucide.createIcons();
+}
+
 function renderAdminLoans(filter = "all") {
     dom.adminLoansTableBody.innerHTML = '';
     
@@ -2907,18 +3242,45 @@ function renderAdminLoans(filter = "all") {
         filtered = grouped.filter(l => l.status === "Devuelto" || l.status === "Anulado");
     }
     
+    // Filtrado por Equipo y/o Categoría seleccionada
+    if (appState.adminLoanEquipmentFilter) {
+        const targetEq = appState.adminLoanEquipmentFilter.toLowerCase().trim();
+        filtered = filtered.filter(l => 
+            l.items && l.items.some(it => it.name && it.name.toLowerCase().trim() === targetEq)
+        );
+    } else if (appState.adminLoanCategoryFilter) {
+        const targetCat = appState.adminLoanCategoryFilter.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        filtered = filtered.filter(l => {
+            return l.items && l.items.some(it => {
+                const inv = appState.inventory.find(i => (i.name || '').toLowerCase().trim() === (it.name || '').toLowerCase().trim());
+                if (inv) {
+                    const invCat = cleanCategoryName(inv.category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+                    return invCat === targetCat;
+                }
+                return false;
+            });
+        });
+    }
+    
     filtered = [...filtered].reverse();
     
     if (filtered.length === 0) {
+        let emptyMsg = "No hay solicitudes registradas.";
+        if (appState.adminLoanEquipmentFilter) {
+            emptyMsg = `No se encontraron préstamos para "${appState.adminLoanEquipmentFilter}" con el filtro de estado actual.`;
+        } else if (appState.adminLoanCategoryFilter) {
+            emptyMsg = `No se encontraron préstamos en la categoría "${appState.adminLoanCategoryFilter}".`;
+        }
         dom.adminLoansTableBody.innerHTML = `
             <tr>
                 <td colspan="12" class="table-empty">
-                    <i data-lucide="list"></i>
-                    <p>No hay solicitudes registradas.</p>
+                    <i data-lucide="search-x"></i>
+                    <p>${emptyMsg}</p>
                 </td>
             </tr>
         `;
         lucide.createIcons();
+        renderAdminEquipmentStatusCard();
         return;
     }
     
@@ -2965,7 +3327,10 @@ function renderAdminLoans(filter = "all") {
             </td>
             <td>
                 <div class="loan-items-list">
-                    ${loan.items.map(it => `<span class="loan-item-entry">• ${it.name}</span>`).join('')}
+                    ${loan.items.map(it => {
+                        const isMatch = appState.adminLoanEquipmentFilter && (it.name || '').trim().toLowerCase() === appState.adminLoanEquipmentFilter.toLowerCase();
+                        return `<span class="loan-item-entry ${isMatch ? 'match-highlight' : ''}">• ${it.name}</span>`;
+                    }).join('')}
                     ${loan.subject ? `<small style="color:var(--text-secondary); font-size:0.72rem; font-weight:500; margin-top:2px;">Asig: ${loan.subject}</small>` : ''}
                     ${loan.obs ? `<small style="color:var(--text-secondary); font-style:italic; font-size:0.72rem; font-weight:500; margin-top:2px; word-break:break-word; max-width:200px; line-height:1.2; display:block;">Obs: ${loan.obs}</small>` : ''}
                     ${loan.obsReturn ? `<small style="color:var(--danger); font-style:italic; font-size:0.72rem; font-weight:500; margin-top:2px; word-break:break-word; max-width:200px; line-height:1.2; display:block;">Obs. Dev: ${loan.obsReturn}</small>` : ''}
@@ -2974,13 +3339,14 @@ function renderAdminLoans(filter = "all") {
             <td>
                 <div class="loan-codes-list">
                     ${loan.items.map(it => {
+                        const isMatch = appState.adminLoanEquipmentFilter && (it.name || '').trim().toLowerCase() === appState.adminLoanEquipmentFilter.toLowerCase();
                         let displayCode = it.code;
                         let extraStyle = "";
                         if ((it.status === "Anulado" || loan.status === "Anulado") && (displayCode === "Pte. Entrega" || !displayCode)) {
                             displayCode = "Anulado";
                             extraStyle = "background: rgba(239, 68, 68, 0.05); border-color: rgba(239, 68, 68, 0.15); color: var(--danger);";
                         }
-                        return `<span class="loan-code-badge" style="${extraStyle}">${displayCode}</span>`;
+                        return `<span class="loan-code-badge ${isMatch ? 'match-code-highlight' : ''}" style="${extraStyle}">${displayCode}</span>`;
                     }).join('')}
                 </div>
             </td>
@@ -3122,6 +3488,7 @@ function renderAdminLoans(filter = "all") {
     });
     
     lucide.createIcons();
+    renderAdminEquipmentStatusCard();
 }
 
 function renderSubjectsDropdown() {
@@ -3756,6 +4123,7 @@ async function saveEquipmentConfig() {
         renderCategoryDropdown(cleanCat);
         renderAdminConfigLists();
         renderLoansModule();
+        renderAdminLoanEquipmentFilters();
         updateAdminDashboard();
     } else {
         showToast("Agregando equipo a Google Sheets...", "info");
@@ -3858,6 +4226,7 @@ async function deleteEquipmentConfig(id, name) {
         showToast(`Equipo "${name}" eliminado.`, "info");
         renderAdminConfigLists();
         renderLoansModule();
+        renderAdminLoanEquipmentFilters();
         updateAdminDashboard();
     } else {
         showToast("Eliminando equipo...", "info");

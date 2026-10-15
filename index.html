@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=39.0">
+    <link rel="stylesheet" href="styles.css?v=41.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -326,7 +326,26 @@
                         <div class="glass-panel admin-sub-panel">
                             <div class="panel-header-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
                                 <h3 class="panel-title" style="margin:0;"><i data-lucide="history"></i> Control y Registro Histórico</h3>
-                                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                                <div class="admin-loans-toolbar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                    <!-- Filtro / Búsqueda por Equipo y Categoría -->
+                                    <div class="admin-equipment-search-container" id="admin-equipment-search-container">
+                                        <div class="filter-select-wrapper">
+                                            <i data-lucide="tag" class="filter-select-icon"></i>
+                                            <select id="admin-filter-category" class="select-filter-admin" title="Elegir categoría para buscar equipos">
+                                                <option value="">Todas las categorías</option>
+                                            </select>
+                                        </div>
+                                        <div class="filter-select-wrapper">
+                                            <i data-lucide="camera" class="filter-select-icon"></i>
+                                            <select id="admin-filter-equipment" class="select-filter-admin" title="Elegir equipo para revisar si está prestado y quién lo tiene">
+                                                <option value="">Todos los equipos</option>
+                                            </select>
+                                        </div>
+                                        <button type="button" class="btn-clear-filter hidden" id="btn-clear-equipment-filter" title="Restablecer filtro de equipo">
+                                            <i data-lucide="x"></i>
+                                        </button>
+                                    </div>
+
                                     <div class="filter-group" style="margin:0;">
                                         <button class="btn btn-filter active" id="btn-filter-loan-all" data-filter="all">Todos</button>
                                         <button class="btn btn-filter" id="btn-filter-loan-solicitado" data-filter="solicitado">Solicitados</button>
@@ -338,6 +357,9 @@
                                     </button>
                                 </div>
                             </div>
+                            
+                            <!-- Ficha de Disponibilidad y Posesión del Equipo Seleccionado -->
+                            <div id="admin-equipment-status-card" class="admin-equipment-status-card hidden"></div>
                             
                             <div class="results-table-container">
                                 <table class="data-table" id="admin-loans-table">
@@ -835,6 +857,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=39.0"></script>
+    <script src="app.js?v=41.0"></script>
 </body>
 </html>
