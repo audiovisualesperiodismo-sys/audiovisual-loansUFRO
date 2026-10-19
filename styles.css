@@ -1449,12 +1449,61 @@ input:checked + .slider:before {
     box-shadow: 0 2px 4px rgba(0,0,0,0.02);
 }
 
-/* BUSCADOR DE EQUIPOS EN PANEL ADMIN */
+/* BUSCADOR DE ALUMNOS Y EQUIPOS EN PANEL ADMIN */
 .admin-loans-toolbar {
     display: flex;
     gap: 10px;
     align-items: center;
     flex-wrap: wrap;
+}
+
+.admin-student-search-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    padding: 3px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.filter-input-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.filter-input-icon {
+    position: absolute;
+    left: 8px;
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.input-filter-admin {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 5px 12px 5px 28px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    outline: none;
+    transition: all 0.2s ease;
+    width: 180px;
+}
+
+.input-filter-admin:hover {
+    border-color: var(--primary);
+}
+
+.input-filter-admin:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.12);
+    width: 215px;
 }
 
 .admin-equipment-search-container {
@@ -2205,6 +2254,23 @@ input:checked + .slider:before {
         flex-direction: column;
         align-items: stretch;
         gap: 8px;
+    }
+
+    .admin-student-search-container {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .filter-input-wrapper {
+        width: 100%;
+        flex: 1;
+    }
+
+    .input-filter-admin {
+        width: 100% !important;
+        max-width: 100%;
     }
 
     .admin-equipment-search-container {

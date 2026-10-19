@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=41.0">
+    <link rel="stylesheet" href="styles.css?v=42.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -327,6 +327,17 @@
                             <div class="panel-header-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
                                 <h3 class="panel-title" style="margin:0;"><i data-lucide="history"></i> Control y Registro Histórico</h3>
                                 <div class="admin-loans-toolbar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                    <!-- Buscador de Alumnos (RUT o Nombre) -->
+                                    <div class="admin-student-search-container" id="admin-student-search-container">
+                                        <div class="filter-input-wrapper">
+                                            <i data-lucide="user" class="filter-input-icon"></i>
+                                            <input type="text" id="admin-filter-student" class="input-filter-admin" placeholder="Buscar alumno o RUT..." title="Buscar por nombre, RUT o correo de alumno" autocomplete="off">
+                                        </div>
+                                        <button type="button" class="btn-clear-filter hidden" id="btn-clear-student-filter" title="Borrar búsqueda de alumno">
+                                            <i data-lucide="x"></i>
+                                        </button>
+                                    </div>
+
                                     <!-- Filtro / Búsqueda por Equipo y Categoría -->
                                     <div class="admin-equipment-search-container" id="admin-equipment-search-container">
                                         <div class="filter-select-wrapper">
@@ -857,6 +868,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=41.0"></script>
+    <script src="app.js?v=42.0"></script>
 </body>
 </html>

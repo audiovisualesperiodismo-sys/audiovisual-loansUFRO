@@ -40,6 +40,7 @@ let appState = {
     activeAdminLoanFilter: "all",
     adminLoanCategoryFilter: "",
     adminLoanEquipmentFilter: "",
+    adminLoanStudentFilter: "",
     currentDeliveryLoanId: null,
     currentReturnLoanId: null,
     currentContactLoanId: null,
@@ -91,6 +92,8 @@ const dom = {
     adminTabContents: document.querySelectorAll('.admin-tab-content'),
     adminLoansTableBody: document.getElementById('admin-loans-table-body'),
     adminLoanFilterBtns: document.querySelectorAll('.btn-filter'),
+    adminFilterStudent: document.getElementById('admin-filter-student'),
+    btnClearStudentFilter: document.getElementById('btn-clear-student-filter'),
     adminFilterCategory: document.getElementById('admin-filter-category'),
     adminFilterEquipment: document.getElementById('admin-filter-equipment'),
     btnClearEquipmentFilter: document.getElementById('btn-clear-equipment-filter'),
@@ -1022,6 +1025,26 @@ function initEventListeners() {
             renderAdminLoans(filterValue);
         });
     });
+
+    if (dom.adminFilterStudent) {
+        dom.adminFilterStudent.addEventListener('input', (e) => {
+            appState.adminLoanStudentFilter = e.target.value;
+            updateClearStudentFilterBtn();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        });
+    }
+
+    if (dom.btnClearStudentFilter) {
+        dom.btnClearStudentFilter.addEventListener('click', () => {
+            appState.adminLoanStudentFilter = "";
+            if (dom.adminFilterStudent) {
+                dom.adminFilterStudent.value = "";
+                dom.adminFilterStudent.focus();
+            }
+            updateClearStudentFilterBtn();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        });
+    }
 
     if (dom.adminFilterCategory) {
         dom.adminFilterCategory.addEventListener('change', (e) => {
@@ -2953,8 +2976,18 @@ function groupLoansById(loans) {
 }
 
 // ==========================================
-// FILTROS DE EQUIPOS Y FICHA DE POSESIÓN (ADMIN)
+// FILTROS DE ALUMNOS, EQUIPOS Y FICHA DE POSESIÓN (ADMIN)
 // ==========================================
+
+function updateClearStudentFilterBtn() {
+    if (!dom.btnClearStudentFilter) return;
+    const hasFilter = Boolean(appState.adminLoanStudentFilter && appState.adminLoanStudentFilter.trim() !== '');
+    if (hasFilter) {
+        dom.btnClearStudentFilter.classList.remove('hidden');
+    } else {
+        dom.btnClearStudentFilter.classList.add('hidden');
+    }
+}
 
 function updateClearEquipmentFilterBtn() {
     if (!dom.btnClearEquipmentFilter) return;
@@ -3233,6 +3266,7 @@ function renderAdminLoans(filter = "all") {
     
     const grouped = groupLoansById(appState.loans);
     
+    // 1. Filtrar por estado de préstamo
     let filtered = grouped;
     if (filter === "solicitado") {
         filtered = grouped.filter(l => l.status === "Solicitado");
@@ -3242,7 +3276,22 @@ function renderAdminLoans(filter = "all") {
         filtered = grouped.filter(l => l.status === "Devuelto" || l.status === "Anulado");
     }
     
-    // Filtrado por Equipo y/o Categoría seleccionada
+    // 2. Filtrado por Alumno (Nombre, RUT, Correo o ID)
+    if (appState.adminLoanStudentFilter && appState.adminLoanStudentFilter.trim() !== '') {
+        const rawQ = appState.adminLoanStudentFilter.trim().toLowerCase();
+        const cleanQ = cleanRut(rawQ).toLowerCase();
+        filtered = filtered.filter(l => {
+            const nameMatch = l.name && l.name.toLowerCase().includes(rawQ);
+            const rutRaw = l.rut ? l.rut.toLowerCase() : '';
+            const rutClean = l.rut ? cleanRut(l.rut).toLowerCase() : '';
+            const rutMatch = rutRaw.includes(rawQ) || (cleanQ.length > 2 && rutClean.includes(cleanQ));
+            const emailMatch = l.email && l.email.toLowerCase().includes(rawQ);
+            const idMatch = l.id && l.id.toLowerCase().includes(rawQ);
+            return nameMatch || rutMatch || emailMatch || idMatch;
+        });
+    }
+
+    // 3. Filtrado por Equipo y/o Categoría seleccionada
     if (appState.adminLoanEquipmentFilter) {
         const targetEq = appState.adminLoanEquipmentFilter.toLowerCase().trim();
         filtered = filtered.filter(l => 
@@ -3266,7 +3315,11 @@ function renderAdminLoans(filter = "all") {
     
     if (filtered.length === 0) {
         let emptyMsg = "No hay solicitudes registradas.";
-        if (appState.adminLoanEquipmentFilter) {
+        if (appState.adminLoanStudentFilter && appState.adminLoanEquipmentFilter) {
+            emptyMsg = `No se encontraron préstamos del alumno "${appState.adminLoanStudentFilter}" con el equipo "${appState.adminLoanEquipmentFilter}".`;
+        } else if (appState.adminLoanStudentFilter) {
+            emptyMsg = `No se encontraron préstamos para el alumno o RUT "${appState.adminLoanStudentFilter}".`;
+        } else if (appState.adminLoanEquipmentFilter) {
             emptyMsg = `No se encontraron préstamos para "${appState.adminLoanEquipmentFilter}" con el filtro de estado actual.`;
         } else if (appState.adminLoanCategoryFilter) {
             emptyMsg = `No se encontraron préstamos en la categoría "${appState.adminLoanCategoryFilter}".`;
@@ -3312,14 +3365,15 @@ function renderAdminLoans(filter = "all") {
         
         const daysOverdue = getDaysOverdue(loan);
         const finalOverdue = loan.status === 'Retirado' ? daysOverdue : (loan.daysOverdue || 0);
+        const isStudentMatch = Boolean(appState.adminLoanStudentFilter && appState.adminLoanStudentFilter.trim());
         
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><strong>${loan.id}</strong></td>
-            <td><code>${loan.rut}</code></td>
+            <td><code class="${isStudentMatch ? 'match-highlight' : ''}">${loan.rut}</code></td>
             <td>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
-                    <span>${loan.name}</span>
+                    <span class="${isStudentMatch ? 'match-highlight' : ''}">${loan.name}</span>
                     <button class="btn-icon-subtle btn-contact-loan" data-loan-id="${loan.id}" title="Contactar a ${loan.name} (${loan.email || ''})" style="background:rgba(2, 132, 199, 0.08); border:1px solid rgba(2, 132, 199, 0.25); border-radius:6px; color:#0284c7; cursor:pointer; padding:3px 6px; display:inline-flex; align-items:center; gap:3px; font-size:0.7rem; font-weight:600; flex-shrink:0; transition:all 0.2s;">
                         <i data-lucide="mail" style="width:12px; height:12px;"></i>
                     </button>
