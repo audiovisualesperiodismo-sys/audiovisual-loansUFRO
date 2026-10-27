@@ -127,6 +127,7 @@ const dom = {
     btnCloseScanner: document.getElementById('btn-close-scanner'),
     deliveryModal: document.getElementById('delivery-modal'),
     btnCloseDelivery: document.getElementById('btn-close-delivery'),
+    btnCancelDelivery: document.getElementById('btn-cancel-delivery'),
     deliveryInputsContainer: document.getElementById('delivery-inputs-container'),
     deliveryGlobalObs: document.getElementById('delivery-global-obs'),
     btnConfirmDelivery: document.getElementById('btn-confirm-delivery'),
@@ -139,6 +140,7 @@ const dom = {
     // Devolución Modal
     returnModal: document.getElementById('return-modal'),
     btnCloseReturn: document.getElementById('btn-close-return'),
+    btnCancelReturn: document.getElementById('btn-cancel-return'),
     btnConfirmReturn: document.getElementById('btn-confirm-return'),
     returnItemsContainer: document.getElementById('return-items-container'),
     returnGlobalObs: document.getElementById('return-global-obs'),
@@ -146,6 +148,7 @@ const dom = {
     // Contactar Alumno Modal (Fase 52)
     contactModal: document.getElementById('contact-modal'),
     btnCloseContact: document.getElementById('btn-close-contact'),
+    btnCancelContact: document.getElementById('btn-cancel-contact'),
     contactLoanSummary: document.getElementById('contact-loan-summary'),
     contactTemplateSelect: document.getElementById('contact-template-select'),
     contactEmailInput: document.getElementById('contact-email-input'),
@@ -1277,8 +1280,12 @@ function initEventListeners() {
         confirmPhysicalDelivery();
     });
     
-    dom.btnCloseDelivery.addEventListener('click', () => {
-        dom.deliveryModal.classList.add('hidden');
+    [dom.btnCloseDelivery, dom.btnCancelDelivery].forEach(btn => {
+        if (btn) {
+            btn.addEventListener('click', () => {
+                dom.deliveryModal.classList.add('hidden');
+            });
+        }
     });
     
     if (dom.btnDeliveryAddEquipment) {
@@ -1327,15 +1334,39 @@ function initEventListeners() {
         confirmReturnCheckout();
     });
     
-    dom.btnCloseReturn.addEventListener('click', () => {
-        dom.returnModal.classList.add('hidden');
+    [dom.btnCloseReturn, dom.btnCancelReturn].forEach(btn => {
+        if (btn) {
+            btn.addEventListener('click', () => {
+                dom.returnModal.classList.add('hidden');
+            });
+        }
     });
     
-    if (dom.btnCloseContact) {
-        dom.btnCloseContact.addEventListener('click', () => {
-            if (dom.contactModal) dom.contactModal.classList.add('hidden');
+    [dom.btnCloseContact, dom.btnCancelContact].forEach(btn => {
+        if (btn) {
+            btn.addEventListener('click', () => {
+                if (dom.contactModal) dom.contactModal.classList.add('hidden');
+            });
+        }
+    });
+
+    // Cerrar cualquier modal al hacer clic en el fondo oscuro exterior
+    document.querySelectorAll('.modal-overlay').forEach(modal => {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.add('hidden');
+            }
         });
-    }
+    });
+
+    // Cerrar cualquier modal abierto al presionar la tecla Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(modal => {
+                modal.classList.add('hidden');
+            });
+        }
+    });
     
     if (dom.contactTemplateSelect) {
         dom.contactTemplateSelect.addEventListener('change', (e) => {
@@ -2154,14 +2185,17 @@ function renderDeliveryModalInputs() {
     const allCancelled = appState.tempDeliveryItems.length > 0 && appState.tempDeliveryItems.every(item => item.isCancelled);
     if (dom.btnConfirmDelivery) {
         if (allCancelled) {
-            dom.btnConfirmDelivery.className = "btn btn-danger btn-full";
-            dom.btnConfirmDelivery.style.marginTop = "20px";
+            dom.btnConfirmDelivery.className = "btn btn-danger";
+            dom.btnConfirmDelivery.style.flex = "2";
+            dom.btnConfirmDelivery.style.marginTop = "0";
             dom.btnConfirmDelivery.innerHTML = '<i data-lucide="x-circle"></i> Confirmar Anulación de la Solicitud';
         } else {
-            dom.btnConfirmDelivery.className = "btn btn-success btn-full";
-            dom.btnConfirmDelivery.style.marginTop = "20px";
+            dom.btnConfirmDelivery.className = "btn btn-success";
+            dom.btnConfirmDelivery.style.flex = "2";
+            dom.btnConfirmDelivery.style.marginTop = "0";
             dom.btnConfirmDelivery.innerHTML = '<i data-lucide="check-circle"></i> Confirmar Entrega Física';
         }
+        if (window.lucide) lucide.createIcons();
     }
     
     // Banner informativo con fechas de solicitud y devolución pactada

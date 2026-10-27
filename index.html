@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=42.0">
+    <link rel="stylesheet" href="styles.css?v=43.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -744,9 +744,14 @@
                     </label>
                     <textarea id="delivery-global-obs" placeholder="Ej: Rayadura en trípode, bolso de cámara sin correa, etc." class="select-input" style="width: 100%; min-height: 60px; padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border); background:#fff; font-family: inherit; font-size: 0.85rem; resize: vertical;" autocomplete="off"></textarea>
                 </div>
-                <button class="btn btn-success btn-full" id="btn-confirm-delivery" style="margin-top:20px;">
-                    <i data-lucide="check-circle"></i> Confirmar Entrega Física
-                </button>
+                <div class="modal-actions-group" style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button type="button" class="btn btn-secondary" id="btn-cancel-delivery" style="flex: 1; display:flex; align-items:center; justify-content:center; gap:6px; padding: 12px 14px; font-weight: 700; border-radius: 8px;">
+                        <i data-lucide="x"></i> Cancelar
+                    </button>
+                    <button class="btn btn-success" id="btn-confirm-delivery" style="flex: 2; margin-top: 0; display:flex; align-items:center; justify-content:center; gap:6px; padding: 12px 14px; font-weight: 700; border-radius: 8px;">
+                        <i data-lucide="check-circle"></i> Confirmar Entrega Física
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -771,9 +776,14 @@
                     </label>
                     <textarea id="return-global-obs" placeholder="Ej: Falta cable HDMI, trípode sin correa, cable cortado, todo en buen estado, etc." class="select-input" style="width: 100%; min-height: 60px; padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border); background:#fff; font-family: inherit; font-size: 0.85rem; resize: vertical;" autocomplete="off"></textarea>
                 </div>
-                <button class="btn btn-success btn-full" id="btn-confirm-return" style="margin-top:20px;">
-                    <i data-lucide="rotate-ccw"></i> Confirmar Devolución
-                </button>
+                <div class="modal-actions-group" style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button type="button" class="btn btn-secondary" id="btn-cancel-return" style="flex: 1; display:flex; align-items:center; justify-content:center; gap:6px; padding: 12px 14px; font-weight: 700; border-radius: 8px;">
+                        <i data-lucide="x"></i> Cancelar
+                    </button>
+                    <button class="btn btn-success" id="btn-confirm-return" style="flex: 2; margin-top: 0; display:flex; align-items:center; justify-content:center; gap:6px; padding: 12px 14px; font-weight: 700; border-radius: 8px;">
+                        <i data-lucide="rotate-ccw"></i> Confirmar Devolución
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -831,8 +841,11 @@
                 </div>
 
                 <!-- Botones de Acción -->
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <button class="btn btn-primary btn-full" id="btn-send-contact-email" style="display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <div class="modal-actions-group" style="display: flex; gap: 10px; align-items: center; margin-top: 16px;">
+                    <button type="button" class="btn btn-secondary" id="btn-cancel-contact" style="padding: 10px 16px; border-radius: 8px; font-weight: 700;">
+                        Cancelar
+                    </button>
+                    <button class="btn btn-primary" id="btn-send-contact-email" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;">
                         <i data-lucide="send"></i> Enviar Correo Oficial (Voucher)
                     </button>
                     <a id="btn-contact-whatsapp-link" href="#" target="_blank" class="btn btn-secondary hidden" style="display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; text-decoration: none; padding: 10px 14px;" title="Contactar por WhatsApp">
@@ -868,6 +881,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=42.0"></script>
+    <script src="app.js?v=43.0"></script>
 </body>
 </html>
