@@ -2423,13 +2423,38 @@ input:checked + .slider:before {
 }
 
 /* ==========================================
-   AGRUPACIÓN DE SOLICITUDES EN TABLA ADMIN
+   AGRUPACIÓN Y MINIMIZACIÓN DE SOLICITUDES EN TABLA ADMIN
    ========================================== */
 .loan-items-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
     align-items: flex-start;
+}
+
+.loan-items-primary,
+.loan-codes-primary {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+    width: 100%;
+}
+
+.loan-items-extra,
+.loan-codes-extra {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+    width: 100%;
+    margin-top: 8px;
+    animation: fadeInModal 0.2s ease-out;
+}
+
+.loan-items-extra.collapsed,
+.loan-codes-extra.collapsed {
+    display: none !important;
 }
 
 .loan-item-entry {
@@ -2458,6 +2483,65 @@ input:checked + .slider:before {
     letter-spacing: 0.3px;
     text-transform: uppercase;
     line-height: 1.5;
+}
+
+.btn-toggle-loan-items {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(79, 70, 229, 0.08);
+    border: 1px solid rgba(79, 70, 229, 0.22);
+    color: var(--primary, #4f46e5);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 4px;
+    margin-bottom: 2px;
+    transition: all 0.2s ease;
+    width: fit-content;
+    user-select: none;
+}
+
+.btn-toggle-loan-items:hover {
+    background: rgba(79, 70, 229, 0.16);
+    border-color: rgba(79, 70, 229, 0.4);
+    color: #3730a3;
+    transform: translateY(-1px);
+}
+
+.btn-toggle-loan-items i {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+
+.loan-codes-summary {
+    margin-top: 4px;
+}
+
+.loan-code-badge-more {
+    background: rgba(100, 116, 139, 0.08);
+    border: 1px dashed rgba(100, 116, 139, 0.35);
+    color: #64748b;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    user-select: none;
+}
+
+.loan-code-badge-more:hover {
+    background: rgba(79, 70, 229, 0.1);
+    border-color: rgba(79, 70, 229, 0.3);
+    color: var(--primary);
 }
 
 /* ==========================================

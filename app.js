@@ -46,7 +46,8 @@ let appState = {
     currentContactLoanId: null,
     tempDeliveryItems: [],
     adminStudentsSearchQuery: "",
-    adminStudentsFilter: "all"
+    adminStudentsFilter: "all",
+    expandedLoanIds: new Set()
 };
 
 // Referencias DOM
@@ -118,6 +119,8 @@ const dom = {
     linkGoogleSheet: document.getElementById('link-google-sheet'),
     btnLogout: document.getElementById('btn-logout'),
     btnLogoutSubnav: document.getElementById('btn-logout-subnav'),
+    btnToggleAllLoans: document.getElementById('btn-toggle-all-loans'),
+    btnToggleAllLoansText: document.getElementById('btn-toggle-all-loans-text'),
     btnExportExcel: document.getElementById('btn-export-excel'),
     toastContainer: document.getElementById('toast-container'),
     chartPopularCategory: document.getElementById('chart-popular-category'),
@@ -1422,6 +1425,12 @@ function initEventListeners() {
             });
         }
     });
+    
+    if (dom.btnToggleAllLoans) {
+        dom.btnToggleAllLoans.addEventListener('click', () => {
+            toggleAllLoansExpansion();
+        });
+    }
     
     if (dom.btnExportExcel) {
         dom.btnExportExcel.addEventListener('click', () => {
@@ -3295,6 +3304,75 @@ function renderAdminEquipmentStatusCard() {
     lucide.createIcons();
 }
 
+function toggleLoanItemsExpansion(loanId) {
+    if (!loanId) return;
+    if (appState.expandedLoanIds.has(loanId)) {
+        appState.expandedLoanIds.delete(loanId);
+    } else {
+        appState.expandedLoanIds.add(loanId);
+    }
+    
+    const isExp = appState.expandedLoanIds.has(loanId);
+    const itemsExtra = document.getElementById(`loan-items-extra-${loanId}`);
+    const codesExtra = document.getElementById(`loan-codes-extra-${loanId}`);
+    const codesSummary = document.getElementById(`loan-codes-summary-${loanId}`);
+    const toggleBtn = document.querySelector(`.btn-toggle-loan-items[data-loan-id="${loanId}"]`);
+    
+    if (itemsExtra) itemsExtra.classList.toggle('collapsed', !isExp);
+    if (codesExtra) codesExtra.classList.toggle('collapsed', !isExp);
+    if (codesSummary) codesSummary.classList.toggle('hidden', isExp);
+    
+    if (toggleBtn) {
+        const hiddenCount = parseInt(toggleBtn.getAttribute('data-hidden-count')) || 0;
+        toggleBtn.setAttribute('title', isExp ? 'Minimizar lista de equipos' : 'Ver todos los equipos');
+        toggleBtn.innerHTML = `
+            <i data-lucide="${isExp ? 'chevron-up' : 'chevron-down'}"></i>
+            <span>${isExp ? 'Ver menos' : `+${hiddenCount} más (Ver todos)`}</span>
+        `;
+        if (window.lucide) lucide.createIcons();
+    }
+    
+    updateToggleAllLoansButton();
+}
+
+function updateToggleAllLoansButton() {
+    const btn = dom.btnToggleAllLoans;
+    if (!btn) return;
+    
+    const grouped = groupLoansById(appState.loans);
+    const loansWithMoreThan3 = grouped.filter(l => l.items && l.items.length > 3);
+    
+    if (loansWithMoreThan3.length === 0) {
+        btn.classList.add('hidden');
+        return;
+    }
+    btn.classList.remove('hidden');
+    
+    const allExpanded = loansWithMoreThan3.every(l => appState.expandedLoanIds.has(l.id));
+    btn.setAttribute('title', allExpanded ? 'Minimizar todas las solicitudes a 3 equipos' : 'Desplegar todos los equipos en todas las solicitudes');
+    btn.innerHTML = `
+        <i data-lucide="${allExpanded ? 'chevrons-down-up' : 'chevrons-up-down'}" style="width:15px; height:15px;"></i>
+        <span id="btn-toggle-all-loans-text">${allExpanded ? 'Minimizar Todo' : 'Expandir Todo'}</span>
+    `;
+    if (window.lucide) lucide.createIcons();
+}
+
+function toggleAllLoansExpansion() {
+    const grouped = groupLoansById(appState.loans);
+    const loansWithMoreThan3 = grouped.filter(l => l.items && l.items.length > 3);
+    if (loansWithMoreThan3.length === 0) return;
+    
+    const allExpanded = loansWithMoreThan3.every(l => appState.expandedLoanIds.has(l.id));
+    
+    if (allExpanded) {
+        appState.expandedLoanIds.clear();
+    } else {
+        loansWithMoreThan3.forEach(l => appState.expandedLoanIds.add(l.id));
+    }
+    
+    renderAdminLoans(appState.activeAdminLoanFilter || "all");
+}
+
 function renderAdminLoans(filter = "all") {
     dom.adminLoansTableBody.innerHTML = '';
     
@@ -3368,6 +3446,7 @@ function renderAdminLoans(filter = "all") {
         `;
         lucide.createIcons();
         renderAdminEquipmentStatusCard();
+        updateToggleAllLoansButton();
         return;
     }
     
@@ -3401,6 +3480,35 @@ function renderAdminLoans(filter = "all") {
         const finalOverdue = loan.status === 'Retirado' ? daysOverdue : (loan.daysOverdue || 0);
         const isStudentMatch = Boolean(appState.adminLoanStudentFilter && appState.adminLoanStudentFilter.trim());
         
+        const totalItems = (loan.items || []).length;
+        const hasMoreThan3 = totalItems > 3;
+        const hiddenItemsCount = totalItems - 3;
+        
+        // Si hay un filtro de equipo activo y el equipo coincide con algún ítem a partir del 4to, expandir automáticamente
+        const hasMatchingHiddenItem = hasMoreThan3 && loan.items.slice(3).some(it => 
+            appState.adminLoanEquipmentFilter && (it.name || '').trim().toLowerCase() === appState.adminLoanEquipmentFilter.toLowerCase()
+        );
+        const isExpanded = hasMoreThan3 && (appState.expandedLoanIds.has(loan.id) || hasMatchingHiddenItem);
+        
+        const visibleItems = hasMoreThan3 ? loan.items.slice(0, 3) : loan.items;
+        const hiddenItems = hasMoreThan3 ? loan.items.slice(3) : [];
+        
+        const renderItemEntry = (it) => {
+            const isMatch = appState.adminLoanEquipmentFilter && (it.name || '').trim().toLowerCase() === appState.adminLoanEquipmentFilter.toLowerCase();
+            return `<span class="loan-item-entry ${isMatch ? 'match-highlight' : ''}">• ${it.name}</span>`;
+        };
+        
+        const renderCodeEntry = (it) => {
+            const isMatch = appState.adminLoanEquipmentFilter && (it.name || '').trim().toLowerCase() === appState.adminLoanEquipmentFilter.toLowerCase();
+            let displayCode = it.code;
+            let extraStyle = "";
+            if ((it.status === "Anulado" || loan.status === "Anulado") && (displayCode === "Pte. Entrega" || !displayCode)) {
+                displayCode = "Anulado";
+                extraStyle = "background: rgba(239, 68, 68, 0.05); border-color: rgba(239, 68, 68, 0.15); color: var(--danger);";
+            }
+            return `<span class="loan-code-badge ${isMatch ? 'match-code-highlight' : ''}" style="${extraStyle}">${displayCode}</span>`;
+        };
+        
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><strong>${loan.id}</strong></td>
@@ -3414,28 +3522,39 @@ function renderAdminLoans(filter = "all") {
                 </div>
             </td>
             <td>
-                <div class="loan-items-list">
-                    ${loan.items.map(it => {
-                        const isMatch = appState.adminLoanEquipmentFilter && (it.name || '').trim().toLowerCase() === appState.adminLoanEquipmentFilter.toLowerCase();
-                        return `<span class="loan-item-entry ${isMatch ? 'match-highlight' : ''}">• ${it.name}</span>`;
-                    }).join('')}
+                <div class="loan-items-list" id="loan-items-list-${loan.id}">
+                    <div class="loan-items-primary">
+                        ${visibleItems.map(renderItemEntry).join('')}
+                    </div>
+                    ${hasMoreThan3 ? `
+                        <div class="loan-items-extra ${isExpanded ? '' : 'collapsed'}" id="loan-items-extra-${loan.id}">
+                            ${hiddenItems.map(renderItemEntry).join('')}
+                        </div>
+                        <button type="button" class="btn-toggle-loan-items" data-loan-id="${loan.id}" data-hidden-count="${hiddenItemsCount}" title="${isExpanded ? 'Minimizar lista de equipos' : 'Ver todos los equipos'}">
+                            <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}"></i>
+                            <span>${isExpanded ? 'Ver menos' : `+${hiddenItemsCount} más (Ver todos)`}</span>
+                        </button>
+                    ` : ''}
                     ${loan.subject ? `<small style="color:var(--text-secondary); font-size:0.72rem; font-weight:500; margin-top:2px;">Asig: ${loan.subject}</small>` : ''}
                     ${loan.obs ? `<small style="color:var(--text-secondary); font-style:italic; font-size:0.72rem; font-weight:500; margin-top:2px; word-break:break-word; max-width:200px; line-height:1.2; display:block;">Obs: ${loan.obs}</small>` : ''}
                     ${loan.obsReturn ? `<small style="color:var(--danger); font-style:italic; font-size:0.72rem; font-weight:500; margin-top:2px; word-break:break-word; max-width:200px; line-height:1.2; display:block;">Obs. Dev: ${loan.obsReturn}</small>` : ''}
                 </div>
             </td>
             <td>
-                <div class="loan-codes-list">
-                    ${loan.items.map(it => {
-                        const isMatch = appState.adminLoanEquipmentFilter && (it.name || '').trim().toLowerCase() === appState.adminLoanEquipmentFilter.toLowerCase();
-                        let displayCode = it.code;
-                        let extraStyle = "";
-                        if ((it.status === "Anulado" || loan.status === "Anulado") && (displayCode === "Pte. Entrega" || !displayCode)) {
-                            displayCode = "Anulado";
-                            extraStyle = "background: rgba(239, 68, 68, 0.05); border-color: rgba(239, 68, 68, 0.15); color: var(--danger);";
-                        }
-                        return `<span class="loan-code-badge ${isMatch ? 'match-code-highlight' : ''}" style="${extraStyle}">${displayCode}</span>`;
-                    }).join('')}
+                <div class="loan-codes-list" id="loan-codes-list-${loan.id}">
+                    <div class="loan-codes-primary">
+                        ${visibleItems.map(renderCodeEntry).join('')}
+                    </div>
+                    ${hasMoreThan3 ? `
+                        <div class="loan-codes-extra ${isExpanded ? '' : 'collapsed'}" id="loan-codes-extra-${loan.id}">
+                            ${hiddenItems.map(renderCodeEntry).join('')}
+                        </div>
+                        <div class="loan-codes-summary ${isExpanded ? 'hidden' : ''}" id="loan-codes-summary-${loan.id}">
+                            <span class="loan-code-badge loan-code-badge-more btn-toggle-loan-codes" data-loan-id="${loan.id}" title="Click para ver los ${totalItems} códigos">
+                                +${hiddenItemsCount} cód.
+                            </span>
+                        </div>
+                    ` : ''}
                 </div>
             </td>
             <td>
@@ -3572,11 +3691,20 @@ function renderAdminLoans(filter = "all") {
             });
         });
         
+        row.querySelectorAll('.btn-toggle-loan-items, .btn-toggle-loan-codes').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = e.currentTarget.getAttribute('data-loan-id');
+                toggleLoanItemsExpansion(id);
+            });
+        });
+        
         dom.adminLoansTableBody.appendChild(row);
     });
     
     lucide.createIcons();
     renderAdminEquipmentStatusCard();
+    updateToggleAllLoansButton();
 }
 
 function renderSubjectsDropdown() {
