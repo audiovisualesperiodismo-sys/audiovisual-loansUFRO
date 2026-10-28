@@ -224,7 +224,7 @@ function healDuplicateLoanRows(ss) {
                 const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
                 const newDisp = Math.min(totalVal, currentDisp + 1);
                 invSheet.getRange(j + 1, invDispIdx + 1).setValue(newDisp);
-                invValues[j - 1][invDispIdx] = newDisp;
+                invValues[j][invDispIdx] = newDisp;
                 break;
               }
             }
@@ -356,6 +356,9 @@ function doGet(e) {
       const loans = searchPendingLoans(ss, query);
       responseData = { status: "success", loans: loans };
     } 
+    else if (action === "recalculateStock") {
+      responseData = executeRecalculateStock(ss);
+    }
     else {
       responseData = { status: "error", message: "Acción GET no válida." };
     }
@@ -535,6 +538,9 @@ function doPost(e) {
     else if (action === "addCategory") {
       responseData = executeAddCategory(ss, postData);
     }
+    else if (action === "recalculateStock") {
+      responseData = executeRecalculateStock(ss);
+    }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
     }
@@ -559,6 +565,16 @@ function normalizeHeader(str) {
             .toLowerCase()
             .normalize("NFD")
             .replace(/[\u0300-\u036f]/g, ""); // Remueve tildes y diacríticos
+}
+
+function normalizeEquipName(str) {
+  if (str === undefined || str === null) return "";
+  return str.toString()
+            .trim()
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/\s+/g, " ");
 }
 
 // ==========================================
@@ -1253,7 +1269,7 @@ function executeDeliverLoan(ss, payload) {
             const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
             const newDisp = Math.min(totalVal, currentDisp + 1);
             invSheet.getRange(j + 1, invDispIdx + 1).setValue(newDisp);
-            invValues[j - 1][invDispIdx] = newDisp; // Sync memory array
+            invValues[j][invDispIdx] = newDisp; // Sync memory array
             break;
           }
         }
@@ -1323,7 +1339,7 @@ function executeDeliverLoan(ss, payload) {
             const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
             const newDisp = Math.min(totalVal, currentDisp + 1);
             invSheet.getRange(j + 1, invDispIdx + 1).setValue(newDisp);
-            invValues[j - 1][invDispIdx] = newDisp;
+            invValues[j][invDispIdx] = newDisp;
             break;
           }
         }
@@ -1468,29 +1484,52 @@ function executeReturnLoan(ss, payload) {
         returnedItems.push({ name: itemName, code: itemCode });
         
         // Restituir stock en inventario
-        let invRowIndex = -1;
+        const cleanItemName = normalizeEquipName(itemName);
+        const cleanItemCode = (itemCode || "").toString().trim().toUpperCase();
+        let bestRowIndex = -1;
+        let fallbackRowIndex = -1;
+        
         for (let j = 1; j < invValues.length; j++) {
-          if (invValues[j][invNameIdx].toString() === itemName) {
+          const rowItemName = normalizeEquipName(invValues[j][invNameIdx]);
+          if (rowItemName === cleanItemName) {
+            const totalVal = parseInt(invValues[j][invTotalIdx]) || 0;
+            const rawDisp = invValues[j][invDispIdx];
+            const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+            
             const codesCell = invCodesIdx !== -1 ? invValues[j][invCodesIdx].toString() : "";
             const rowCodes = codesCell.split(",").map(c => c.trim().toUpperCase());
+            const codeMatches = cleanItemCode && rowCodes.includes(cleanItemCode);
             
-            if (itemCode && rowCodes.includes(itemCode.toUpperCase().trim())) {
-              invRowIndex = j + 1;
+            // Prioridad 1: Coincide el código específico y hay espacio para restituir
+            if (codeMatches && currentDisp < totalVal) {
+              bestRowIndex = j + 1;
               break;
-            } else if (invRowIndex === -1) {
-              invRowIndex = j + 1;
+            }
+            // Prioridad 2: Coincide el código específico
+            if (codeMatches && bestRowIndex === -1) {
+              bestRowIndex = j + 1;
+            }
+            // Prioridad 3: No coincide código específico pero esta fila tiene disponible < total (tiene espacio para reincorporar)
+            if (currentDisp < totalVal && fallbackRowIndex === -1) {
+              fallbackRowIndex = j + 1;
+            }
+            // Prioridad 4: Primera fila coincidente por nombre
+            if (fallbackRowIndex === -1) {
+              fallbackRowIndex = j + 1;
             }
           }
         }
         
-        if (invRowIndex !== -1) {
-          const rawDisp = invValues[invRowIndex - 1][invDispIdx];
-          const totalVal = parseInt(invValues[invRowIndex - 1][invTotalIdx]) || 0;
+        const targetRowIndex = bestRowIndex !== -1 ? bestRowIndex : fallbackRowIndex;
+        if (targetRowIndex !== -1) {
+          const invArrIndex = targetRowIndex - 1;
+          const totalVal = parseInt(invValues[invArrIndex][invTotalIdx]) || 0;
+          const rawDisp = invValues[invArrIndex][invDispIdx];
           const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
-          const newDisp = Math.min(totalVal, currentDisp + 1);
+          const newDisp = totalVal > 0 ? Math.min(totalVal, currentDisp + 1) : (currentDisp + 1);
           
-          invSheet.getRange(invRowIndex, invDispIdx + 1).setValue(newDisp);
-          invValues[invRowIndex - 1][invDispIdx] = newDisp; // Sync in-memory array for next iterations
+          invSheet.getRange(targetRowIndex, invDispIdx + 1).setValue(newDisp);
+          invValues[invArrIndex][invDispIdx] = newDisp; // Sync in-memory array for next iterations
         }
       }
     }
@@ -1622,29 +1661,48 @@ function executeCancelLoan(ss, payload) {
           currentCodes[k] = "Anulado";
         }
         
-        let invRowIndex = -1;
+        const cleanItemName = normalizeEquipName(itemName);
+        const cleanItemCode = (itemCode || "").toString().trim().toUpperCase();
+        let bestRowIndex = -1;
+        let fallbackRowIndex = -1;
+        
         for (let j = 1; j < invValues.length; j++) {
-          if (invValues[j][invNameIdx].toString() === itemName) {
+          const rowItemName = normalizeEquipName(invValues[j][invNameIdx]);
+          if (rowItemName === cleanItemName) {
+            const totalVal = parseInt(invValues[j][invTotalIdx]) || 0;
+            const rawDisp = invValues[j][invDispIdx];
+            const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
+            
             const codesCell = invCodesIdx !== -1 ? invValues[j][invCodesIdx].toString() : "";
             const rowCodes = codesCell.split(",").map(c => c.trim().toUpperCase());
+            const codeMatches = cleanItemCode && rowCodes.includes(cleanItemCode);
             
-            if (itemCode && rowCodes.includes(itemCode.toUpperCase().trim())) {
-              invRowIndex = j + 1;
+            if (codeMatches && currentDisp < totalVal) {
+              bestRowIndex = j + 1;
               break;
-            } else if (invRowIndex === -1) {
-              invRowIndex = j + 1;
+            }
+            if (codeMatches && bestRowIndex === -1) {
+              bestRowIndex = j + 1;
+            }
+            if (currentDisp < totalVal && fallbackRowIndex === -1) {
+              fallbackRowIndex = j + 1;
+            }
+            if (fallbackRowIndex === -1) {
+              fallbackRowIndex = j + 1;
             }
           }
         }
         
-        if (invRowIndex !== -1) {
-          const rawDisp = invValues[invRowIndex - 1][invDispIdx];
-          const totalVal = parseInt(invValues[invRowIndex - 1][invTotalIdx]) || 0;
+        const targetRowIndex = bestRowIndex !== -1 ? bestRowIndex : fallbackRowIndex;
+        if (targetRowIndex !== -1) {
+          const invArrIndex = targetRowIndex - 1;
+          const totalVal = parseInt(invValues[invArrIndex][invTotalIdx]) || 0;
+          const rawDisp = invValues[invArrIndex][invDispIdx];
           const currentDisp = (rawDisp === "" || rawDisp === undefined || rawDisp === null) ? totalVal : (parseInt(rawDisp) || 0);
-          const newDisp = Math.min(totalVal, currentDisp + 1);
+          const newDisp = totalVal > 0 ? Math.min(totalVal, currentDisp + 1) : (currentDisp + 1);
           
-          invSheet.getRange(invRowIndex, invDispIdx + 1).setValue(newDisp);
-          invValues[invRowIndex - 1][invDispIdx] = newDisp; // Sync in-memory array for next iterations
+          invSheet.getRange(targetRowIndex, invDispIdx + 1).setValue(newDisp);
+          invValues[invArrIndex][invDispIdx] = newDisp; // Sync in-memory array for next iterations
         }
         
         cancelledItems.push({ name: itemName, code: itemCode });
@@ -1690,6 +1748,96 @@ function executeCancelLoan(ss, payload) {
     return { status: "success", message: "Préstamo anulado." };
   } catch (error) {
     return { status: "error", message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ==========================================
+// AUDITORÍA Y RECALCULO DE STOCK DISPONIBLE
+// ==========================================
+function executeRecalculateStock(ss) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) {
+    return { status: "error", message: "Servidor ocupado." };
+  }
+  
+  try {
+    const invSheet = ss.getSheetByName("Inventario");
+    const loanSheet = ss.getSheetByName("Préstamos");
+    if (!invSheet || !loanSheet) throw new Error("Faltan hojas de Inventario o Préstamos");
+    
+    const invValues = invSheet.getDataRange().getValues();
+    const invHeaders = invValues[0].map(normalizeHeader);
+    const { nameIdx: invNameIdx, totalIdx: invTotalIdx, availableIdx: invDispIdx } = getInventoryHeaderIndices(invHeaders);
+    
+    const loanValues = loanSheet.getDataRange().getValues();
+    const loanHeaders = loanValues[0].map(normalizeHeader);
+    const { itemIdx, statusIdx } = getLoanHeaderIndices(loanHeaders);
+    
+    // Contar cuántos equipos de cada nombre están actualmente en estado activo ("Solicitado" o "Retirado")
+    const activeCountByNormName = {};
+    for (let i = 1; i < loanValues.length; i++) {
+      const rowItems = loanValues[i][itemIdx] ? loanValues[i][itemIdx].toString() : "";
+      const itemsList = rowItems.split("\n").map(function(x) { return x.trim(); }).filter(Boolean);
+      const expectedCount = itemsList.length;
+      if (expectedCount === 0) continue;
+      
+      const rawStatus = statusIdx !== -1 && loanValues[i][statusIdx] ? loanValues[i][statusIdx].toString().trim() : "Solicitado";
+      const statusesList = rawStatus.includes("\n") ? splitCellValues(rawStatus, expectedCount) : new Array(expectedCount).fill(rawStatus);
+      
+      for (let k = 0; k < expectedCount; k++) {
+        const itStatus = (statusesList[k] || "Solicitado").trim();
+        if (itStatus === "Solicitado" || itStatus === "Retirado") {
+          const norm = normalizeEquipName(itemsList[k]);
+          activeCountByNormName[norm] = (activeCountByNormName[norm] || 0) + 1;
+        }
+      }
+    }
+    
+    // Agrupar filas de inventario por nombre normalizado
+    const invRowsByName = {};
+    for (let j = 1; j < invValues.length; j++) {
+      const itName = invValues[j][invNameIdx];
+      if (!itName) continue;
+      const norm = normalizeEquipName(itName);
+      if (!invRowsByName[norm]) invRowsByName[norm] = [];
+      invRowsByName[norm].push({
+        rowIndex: j + 1,
+        total: parseInt(invValues[j][invTotalIdx]) || 0,
+        currentDisp: parseInt(invValues[j][invDispIdx]) || 0
+      });
+    }
+    
+    let correctionsCount = 0;
+    for (const norm in invRowsByName) {
+      const rows = invRowsByName[norm];
+      const grandTotal = rows.reduce(function(acc, r) { return acc + r.total; }, 0);
+      const activeBorrowed = activeCountByNormName[norm] || 0;
+      let totalAvailableToDistribute = Math.max(0, grandTotal - activeBorrowed);
+      
+      for (let r = 0; r < rows.length; r++) {
+        const rowObj = rows[r];
+        const newDisp = Math.min(rowObj.total, totalAvailableToDistribute);
+        totalAvailableToDistribute -= newDisp;
+        
+        if (newDisp !== rowObj.currentDisp) {
+          invSheet.getRange(rowObj.rowIndex, invDispIdx + 1).setValue(newDisp);
+          correctionsCount++;
+        }
+      }
+    }
+    
+    SpreadsheetApp.flush();
+    clearInitDataCache();
+    
+    return {
+      status: "success",
+      message: "Stock recalculado y auditado con éxito. Se corrigieron " + correctionsCount + " registros de inventario.",
+      correctionsCount: correctionsCount
+    };
+  } catch (err) {
+    return { status: "error", message: err.toString() };
   } finally {
     lock.releaseLock();
   }

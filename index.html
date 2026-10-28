@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=44.0">
+    <link rel="stylesheet" href="styles.css?v=45.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -367,6 +367,10 @@
                                         <button class="btn btn-secondary" id="btn-toggle-all-loans" style="display:flex; align-items:center; gap:6px; padding: 8px 12px; font-size: 0.8rem; font-weight:700; border-radius:8px;" title="Alternar expansión de pedidos con más de 3 equipos">
                                             <i data-lucide="chevrons-up-down" style="width:15px; height:15px;"></i>
                                             <span id="btn-toggle-all-loans-text">Expandir Todo</span>
+                                        </button>
+                                        <button class="btn btn-secondary" id="btn-sync-inventory-stock" style="display:flex; align-items:center; gap:6px; padding: 8px 12px; font-size: 0.8rem; font-weight:700; border-radius:8px;" title="Auditar préstamos activos y corregir el stock disponible del inventario">
+                                            <i data-lucide="refresh-cw" style="width:15px; height:15px;"></i>
+                                            <span>Auditar Stock</span>
                                         </button>
                                         <button class="btn btn-primary" id="btn-export-excel" style="display:flex; align-items:center; gap:6px; padding: 8px 14px; font-size: 0.8rem; font-weight:700; border-radius:8px;">
                                             <i data-lucide="download" style="width:15px; height:15px;"></i> Exportar Excel
@@ -887,6 +891,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=44.0"></script>
+    <script src="app.js?v=45.0"></script>
 </body>
 </html>

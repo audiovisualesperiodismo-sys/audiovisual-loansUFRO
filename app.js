@@ -121,6 +121,7 @@ const dom = {
     btnLogoutSubnav: document.getElementById('btn-logout-subnav'),
     btnToggleAllLoans: document.getElementById('btn-toggle-all-loans'),
     btnToggleAllLoansText: document.getElementById('btn-toggle-all-loans-text'),
+    btnSyncInventoryStock: document.getElementById('btn-sync-inventory-stock'),
     btnExportExcel: document.getElementById('btn-export-excel'),
     toastContainer: document.getElementById('toast-container'),
     chartPopularCategory: document.getElementById('chart-popular-category'),
@@ -687,11 +688,46 @@ function saveCurrentStateToOfflineCache() {
     }
 }
 
+function auditAndHealLocalInventory() {
+    if (!appState.inventory || !appState.loans) return;
+    
+    appState.inventory.forEach(inv => {
+        if (!inv || !inv.name) return;
+        const cleanName = inv.name.trim().toLowerCase();
+        const activeOut = appState.loans.filter(l => 
+            (l.item || '').trim().toLowerCase() === cleanName && 
+            (l.status === 'Retirado' || l.status === 'Solicitado')
+        ).length;
+        
+        const total = parseInt(inv.total) || 0;
+        if (total > 0) {
+            // Si ningún alumno tiene el equipo solicitado o retirado y disponible quedó en 0 o negativo, restaurar
+            if (activeOut === 0 && inv.available <= 0) {
+                inv.available = total;
+            } else if (inv.available < 0 || inv.available > total) {
+                inv.available = Math.max(0, total - activeOut);
+            }
+        }
+    });
+}
+
 function applyDeliverOptimisticState(loanId, activeItems, itemsPayload, cancelledItems, globalObsVal) {
     const dateStr = getNowFormatted();
     if (Array.isArray(activeItems)) {
-        activeItems.forEach(tempItem => {
-            const assigned = (itemsPayload || []).find(p => p.name === tempItem.item);
+        // Clonar itemsPayload para emparejar y consumir elementos 1 a 1 de forma segura (evita colisiones con múltiples unidades del mismo equipo)
+        const unusedPayload = [...(itemsPayload || [])];
+        
+        activeItems.forEach((tempItem, idx) => {
+            const cleanName = (tempItem.item || '').trim().toLowerCase();
+            let payloadIdx = unusedPayload.findIndex(p => 
+                (p.name || '').trim().toLowerCase() === cleanName && 
+                (tempItem.assignedCode ? p.code === tempItem.assignedCode : true)
+            );
+            if (payloadIdx === -1) {
+                payloadIdx = unusedPayload.findIndex(p => (p.name || '').trim().toLowerCase() === cleanName);
+            }
+            const assigned = payloadIdx !== -1 ? unusedPayload.splice(payloadIdx, 1)[0] : (itemsPayload[idx] || null);
+            
             if (tempItem.isNew) {
                 const newLoanRecord = {
                     id: loanId,
@@ -699,7 +735,7 @@ function applyDeliverOptimisticState(loanId, activeItems, itemsPayload, cancelle
                     name: tempItem.name,
                     email: tempItem.email,
                     item: tempItem.item,
-                    code: assigned ? assigned.code : "Pte. Entrega",
+                    code: assigned ? assigned.code : (tempItem.assignedCode || "Pte. Entrega"),
                     status: "Retirado",
                     dateOut: tempItem.dateOut,
                     dateDeliver: dateStr,
@@ -712,15 +748,15 @@ function applyDeliverOptimisticState(loanId, activeItems, itemsPayload, cancelle
                     daysOverdue: 0
                 };
                 appState.loans.push(newLoanRecord);
-                const invItem = appState.inventory.find(i => i.name === tempItem.item);
+                const invItem = appState.inventory.find(i => (i.name || '').trim().toLowerCase() === cleanName);
                 if (invItem) {
-                    invItem.available = Math.max(0, invItem.available - 1);
+                    invItem.available = Math.max(0, (parseInt(invItem.available) || 0) - 1);
                 }
             } else {
-                const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
+                const loanItem = appState.loans.find(l => l.id === loanId && (l.item || '').trim().toLowerCase() === cleanName && l.status === "Solicitado");
                 if (loanItem) {
                     loanItem.status = "Retirado";
-                    loanItem.code = assigned ? assigned.code : loanItem.code;
+                    loanItem.code = assigned ? assigned.code : (tempItem.assignedCode || loanItem.code);
                     loanItem.obs = globalObsVal;
                     loanItem.dateDeliver = dateStr;
                 }
@@ -730,14 +766,16 @@ function applyDeliverOptimisticState(loanId, activeItems, itemsPayload, cancelle
 
     if (Array.isArray(cancelledItems)) {
         cancelledItems.forEach(tempItem => {
+            const cleanName = (tempItem.item || '').trim().toLowerCase();
             if (!tempItem.isNew) {
-                const loanItem = appState.loans.find(l => l.id === loanId && l.item === tempItem.item && l.status === "Solicitado");
+                const loanItem = appState.loans.find(l => l.id === loanId && (l.item || '').trim().toLowerCase() === cleanName && l.status === "Solicitado");
                 if (loanItem) {
                     loanItem.status = "Anulado";
                     loanItem.code = "Anulado";
-                    const invItem = appState.inventory.find(i => i.name === tempItem.item);
+                    const invItem = appState.inventory.find(i => (i.name || '').trim().toLowerCase() === cleanName);
                     if (invItem) {
-                        invItem.available = Math.min(invItem.total, invItem.available + 1);
+                        const maxTotal = parseInt(invItem.total) || 0;
+                        invItem.available = maxTotal > 0 ? Math.min(maxTotal, (parseInt(invItem.available) || 0) + 1) : ((parseInt(invItem.available) || 0) + 1);
                     }
                 }
             }
@@ -757,9 +795,11 @@ function applyReturnOptimisticState(loanId, obsReturnVal) {
         loan.daysOverdue = days;
         loan.obsReturn = obsReturnVal || '';
 
-        const invItem = appState.inventory.find(i => i.name === loan.item);
+        const cleanItemName = (loan.item || '').trim().toLowerCase();
+        const invItem = appState.inventory.find(i => (i.name || '').trim().toLowerCase() === cleanItemName);
         if (invItem) {
-            invItem.available = Math.min(invItem.total, invItem.available + 1);
+            const maxTotal = parseInt(invItem.total) || 0;
+            invItem.available = maxTotal > 0 ? Math.min(maxTotal, (parseInt(invItem.available) || 0) + 1) : ((parseInt(invItem.available) || 0) + 1);
         }
     });
 }
@@ -774,9 +814,11 @@ function applyCancelOptimisticState(loanId) {
         if (loan.code === "Pte. Entrega" || !loan.code) {
             loan.code = "Anulado";
         }
-        const invItem = appState.inventory.find(i => i.name === loan.item);
+        const cleanItemName = (loan.item || '').trim().toLowerCase();
+        const invItem = appState.inventory.find(i => (i.name || '').trim().toLowerCase() === cleanItemName);
         if (invItem) {
-            invItem.available = Math.min(invItem.total, invItem.available + 1);
+            const maxTotal = parseInt(invItem.total) || 0;
+            invItem.available = maxTotal > 0 ? Math.min(maxTotal, (parseInt(invItem.available) || 0) + 1) : ((parseInt(invItem.available) || 0) + 1);
         }
     });
     return true;
@@ -829,6 +871,7 @@ async function loadData(forceRefresh = false) {
                     appState.inventory = groupInventoryItems(cachedData.inventory);
                     appState.students = cachedData.students || [];
                     appState.loans = cachedData.loans || [];
+                    auditAndHealLocalInventory();
                     appState.subjects = cachedData.subjects || [];
                     appState.categories = (cachedData.categories && Array.isArray(cachedData.categories))
                         ? cachedData.categories.map(cleanCategoryName)
@@ -875,6 +918,7 @@ async function loadData(forceRefresh = false) {
             appState.inventory = groupInventoryItems(data.inventory);
             appState.students = data.students || [];
             appState.loans = data.loans || [];
+            auditAndHealLocalInventory();
             appState.subjects = data.subjects || [];
             appState.categories = (data.categories && Array.isArray(data.categories))
                 ? data.categories.map(cleanCategoryName)
@@ -946,6 +990,53 @@ function recalculateDemoStock() {
             }
         }
     });
+}
+
+async function recalculateAndSyncStock() {
+    if (CONFIG.demoMode) {
+        recalculateDemoStock();
+        saveDemoState();
+        renderLoansModule();
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        showToast("Stock de inventario auditado y sincronizado (Modo Demo).", "success");
+        return;
+    }
+    
+    showToast("Auditando préstamos activos y sincronizando stock con Google Sheets...", "info");
+    try {
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=recalculateStock`, {
+            method: 'POST',
+            mode: 'cors',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ timestamp: getNowFormatted() })
+        }, 1, 1500, 30000);
+        
+        const data = await response.json();
+        if (data.status === "success") {
+            showToast(data.message || "Stock auditado y corregido con éxito en la planilla.", "success");
+            await loadData(true);
+        } else {
+            showToast(data.message || "Aviso al sincronizar stock.", "warning");
+            auditAndHealLocalInventory();
+            renderLoansModule();
+            if (appState.isAdminLoggedIn) {
+                updateAdminDashboard();
+                renderAdminLoans(appState.activeAdminLoanFilter);
+            }
+        }
+    } catch (err) {
+        console.error("Error sincronizando stock:", err);
+        auditAndHealLocalInventory();
+        renderLoansModule();
+        if (appState.isAdminLoggedIn) {
+            updateAdminDashboard();
+            renderAdminLoans(appState.activeAdminLoanFilter);
+        }
+        showToast("Stock ajustado localmente según préstamos activos.", "info");
+    }
 }
 
 function setDemoMode(active) {
@@ -1429,6 +1520,12 @@ function initEventListeners() {
     if (dom.btnToggleAllLoans) {
         dom.btnToggleAllLoans.addEventListener('click', () => {
             toggleAllLoansExpansion();
+        });
+    }
+    
+    if (dom.btnSyncInventoryStock) {
+        dom.btnSyncInventoryStock.addEventListener('click', () => {
+            recalculateAndSyncStock();
         });
     }
     
@@ -2540,7 +2637,7 @@ async function executeDeliverLoanApi(loanId, items, cancelledItems) {
         const data = await response.json();
         if (data.status === "success") {
             showToast(data.message || "Retiro registrado con éxito en Google Sheets.", "success");
-            loadData(false);
+            loadData(true);
         } else {
             console.warn("Aviso del servidor al registrar entrega:", data);
             showToast(data.message || "Aviso al registrar entrega.", "warning");
@@ -2623,10 +2720,12 @@ async function confirmReturnCheckout() {
 }
 
 async function executeReturnApi(loanId, obsReturn) {
+    const loanItems = appState.loans.filter(l => l.id === loanId);
     const payload = {
         loanId: loanId,
         timestamp: getNowFormatted(),
-        obsReturn: obsReturn || ''
+        obsReturn: obsReturn || '',
+        items: loanItems.map(it => ({ name: it.item, code: it.code }))
     };
     
     try {
@@ -2640,7 +2739,7 @@ async function executeReturnApi(loanId, obsReturn) {
         const data = await response.json();
         if (data.status === "success") {
             showToast(data.message || "Devolución procesada e email enviado con éxito.", "success");
-            loadData(false);
+            loadData(true);
         } else {
             console.warn("Aviso del servidor en devolución:", data);
             showToast(data.message || "Aviso en devolución.", "warning");
@@ -2706,7 +2805,7 @@ async function executeCancelApi(loanId) {
         const data = await response.json();
         if (data.status === "success") {
             showToast("Préstamo anulado con éxito en Google Sheets.", "success");
-            loadData(false);
+            loadData(true);
         } else {
             console.warn("Aviso del servidor en anulación:", data);
             showToast(data.message || "Aviso al anular préstamo.", "warning");
