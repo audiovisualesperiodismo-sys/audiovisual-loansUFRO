@@ -9,13 +9,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=45.0">
+    <link rel="stylesheet" href="styles.css?v=46.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- html5-qrcode para escanear códigos con la cámara -->
     <script src="https://unpkg.com/html5-qrcode@2.3.8/lucas-html5-qrcode.min.js"></script>
+    
+    <!-- Firebase SDK v10 (Compat para Vanilla JavaScript) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     
     <!-- PWA Manifest & Apple Web App Meta Tags (Fase 23) -->
     <link rel="manifest" href="manifest.json">
@@ -372,6 +376,10 @@
                                             <i data-lucide="refresh-cw" style="width:15px; height:15px;"></i>
                                             <span>Auditar Stock</span>
                                         </button>
+                                        <button class="btn btn-secondary" id="btn-manual-backup-sheet" style="display:flex; align-items:center; gap:6px; padding: 8px 12px; font-size: 0.8rem; font-weight:700; border-radius:8px;" title="Generar un respaldo instantáneo de toda la base de datos a Google Sheets">
+                                            <i data-lucide="cloud-download" style="width:15px; height:15px;"></i>
+                                            <span>Respaldar en Sheet</span>
+                                        </button>
                                         <button class="btn btn-primary" id="btn-export-excel" style="display:flex; align-items:center; gap:6px; padding: 8px 14px; font-size: 0.8rem; font-weight:700; border-radius:8px;">
                                             <i data-lucide="download" style="width:15px; height:15px;"></i> Exportar Excel
                                         </button>
@@ -652,6 +660,59 @@
                             </div>
                         </div>
 
+                        <!-- Panel de Configuración de Firebase Firestore (Tiempo Real) -->
+                        <div class="glass-panel settings-card" style="margin-top: 30px; border-left: 4px solid #10b981;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+                                <h3 class="panel-title" style="margin:0;"><i data-lucide="flame" style="color:#f59e0b;"></i> Base de Datos Firebase Firestore (Tiempo Real)</h3>
+                                <span class="firebase-config-badge offline" id="firebase-status-badge">
+                                    <i data-lucide="alert-circle" style="width:13px; height:13px;"></i> No configurado
+                                </span>
+                            </div>
+                            <p class="card-desc">Conecta Firebase Firestore para tener sincronización instantánea (sub-segundo) en todos los dispositivos y soporte offline nativo sin desfases ni duplicados.</p>
+                            
+                            <div class="settings-form">
+                                <div class="input-group">
+                                    <label for="select-backend-mode"><strong>Modo de Base de Datos Activo:</strong></label>
+                                    <select id="select-backend-mode" class="select-input" style="padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border); font-size: 0.85rem; font-weight: 700; background: #fff;">
+                                        <option value="firebase">🔥 Firebase Firestore (Recomendado - Tiempo Real)</option>
+                                        <option value="sheets">📊 Google Sheets + Apps Script (Modo Tradicional / Contingencia)</option>
+                                    </select>
+                                    <span class="input-helper">Elige Firebase para trabajar en vivo a máxima velocidad. Si en algún momento deseas volver a Google Sheets directo, puedes cambiarlo aquí con un clic.</span>
+                                </div>
+
+                                <div class="input-group" style="margin-top: 15px;">
+                                    <label for="firebase-config-input">Objeto de Configuración de Firebase (firebaseConfig)</label>
+                                    <textarea id="firebase-config-input" placeholder='{\n  "apiKey": "AIzaSy...",\n  "authDomain": "avp-ufro.firebaseapp.com",\n  "projectId": "avp-ufro",\n  "storageBucket": "avp-ufro.appspot.com",\n  "messagingSenderId": "...",\n  "appId": "..."\n}' class="select-input" style="width: 100%; min-height: 120px; font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: #f8fafc; resize: vertical;" autocomplete="off"></textarea>
+                                    <span class="input-helper">Pega aquí el bloque de código <code>firebaseConfig</code> que entrega la consola de Firebase al registrar tu aplicación web.</span>
+                                </div>
+
+                                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 10px;">
+                                    <button class="btn btn-primary" id="btn-save-firebase-config" style="display:flex; align-items:center; gap:6px;">
+                                        <i data-lucide="save"></i> Guardar Configuración Firebase
+                                    </button>
+                                    <button class="btn btn-secondary" id="btn-test-firebase" style="display:flex; align-items:center; gap:6px;">
+                                        <i data-lucide="zap"></i> Probar Conexión Firestore
+                                    </button>
+                                    <button class="btn btn-secondary" id="btn-seed-firebase" style="display:flex; align-items:center; gap:6px; background:rgba(79, 70, 229, 0.08); border-color:rgba(79, 70, 229, 0.3); color:var(--primary);" title="Subir todo el inventario, alumnos y préstamos actuales a la base de datos de Firebase">
+                                        <i data-lucide="upload-cloud"></i> Sembrar Datos Actuales a Firebase
+                                    </button>
+                                </div>
+
+                                <!-- Caja de Respaldo a Google Sheets -->
+                                <div class="backup-schedule-box">
+                                    <div>
+                                        <strong style="color:var(--text-primary); display:block; font-size:0.85rem;"><i data-lucide="shield-check" style="width:15px; height:15px; display:inline; vertical-align:text-bottom; color:#0284c7;"></i> Bóveda de Respaldo en Google Sheets</strong>
+                                        <span style="font-size:0.75rem; color:var(--text-secondary); display:block; margin-top:2px;">
+                                            Programado automáticamente <strong>3 veces al día</strong> (08:00, 14:00, 20:00 hrs). Último respaldo registrado: <code id="display-last-backup-time">Sin registros recientes</code>
+                                        </span>
+                                    </div>
+                                    <button type="button" class="btn btn-secondary" id="btn-trigger-backup-now" style="display:flex; align-items:center; gap:6px; padding: 7px 12px; font-size: 0.78rem; font-weight:700; white-space:nowrap;">
+                                        <i data-lucide="refresh-cw" style="width:13px; height:13px;"></i> Respaldar en Sheet Ahora
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Panel de Configuración de Conexión API -->
                         <div class="glass-panel settings-card" style="margin-top: 30px;">
                             <h3 class="panel-title"><i data-lucide="settings"></i> Configuración de Conexión</h3>
@@ -891,6 +952,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=45.0"></script>
+    <script src="app.js?v=46.0"></script>
 </body>
 </html>

@@ -4,10 +4,22 @@
 
 const CONFIG = {
     demoMode: false,
+    backendMode: localStorage.getItem('audiolend_backend_mode') || 'firebase',
+    firebaseConfig: (() => {
+        try {
+            const raw = localStorage.getItem('audiolend_firebase_config');
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    })(),
     scriptUrl: localStorage.getItem('audiolend_script_url') || 'https://script.google.com/macros/s/AKfycbywwlkVaHLmOA3c67V3PhPjcIK96a2IYfkFZ1Mgw9HdGRYp3Kj4twWJvoZVBDK7_Fu8/exec',
     sheetUrl: localStorage.getItem('audiolend_sheet_url') || 'https://docs.google.com/spreadsheets/d/1HTRMz15UmVqTHgGkU95OjK7wihZJgEm05G7QfgNqNeg/edit?pli=1&gid=1451542023#gid=1451542023',
     adminPassword: 'adminfelipe',
 };
+
+let firestoreDb = null;
+let firestoreUnsubscribers = [];
 
 // Base de Datos en Memoria para el MODO DEMO (Columnas reales de la UFRO)
 const DEMO_DATABASE = {
@@ -123,6 +135,15 @@ const dom = {
     btnToggleAllLoansText: document.getElementById('btn-toggle-all-loans-text'),
     btnSyncInventoryStock: document.getElementById('btn-sync-inventory-stock'),
     btnExportExcel: document.getElementById('btn-export-excel'),
+    btnManualBackupSheet: document.getElementById('btn-manual-backup-sheet'),
+    firebaseStatusBadge: document.getElementById('firebase-status-badge'),
+    selectBackendMode: document.getElementById('select-backend-mode'),
+    firebaseConfigInput: document.getElementById('firebase-config-input'),
+    btnSaveFirebaseConfig: document.getElementById('btn-save-firebase-config'),
+    btnTestFirebase: document.getElementById('btn-test-firebase'),
+    btnSeedFirebase: document.getElementById('btn-seed-firebase'),
+    displayLastBackupTime: document.getElementById('display-last-backup-time'),
+    btnTriggerBackupNow: document.getElementById('btn-trigger-backup-now'),
     toastContainer: document.getElementById('toast-container'),
     chartPopularCategory: document.getElementById('chart-popular-category'),
     
@@ -565,6 +586,12 @@ function setConnectionState(state) {
         return;
     }
 
+    if (state === "firebase" || (CONFIG.backendMode === "firebase" && firestoreDb && navigator.onLine)) {
+        dom.connectionStatus.className = "status-indicator firebase-active";
+        if (label) label.textContent = "Firebase En Vivo ⚡";
+        return;
+    }
+
     const queue = getOfflineQueue();
     if (state === "pending" || (queue.length > 0 && state !== "offline")) {
         dom.connectionStatus.className = "status-indicator pending-active";
@@ -855,6 +882,22 @@ async function loadData(forceRefresh = false) {
         }
         showToast("Datos demo activos (AVP UFRO)", "info");
     } else {
+        // --- MODO FIREBASE FIRESTORE ---
+        if (CONFIG.backendMode === 'firebase' && CONFIG.firebaseConfig && CONFIG.firebaseConfig.projectId) {
+            const fbReady = initFirebaseService();
+            if (fbReady) {
+                if (appState.inventory.length > 0) {
+                    renderLoansModule();
+                    renderCategoryDropdown();
+                    if (appState.isAdminLoggedIn) {
+                        updateAdminDashboard();
+                        renderAdminLoans(appState.activeAdminLoanFilter);
+                    }
+                }
+                return;
+            }
+        }
+
         if (!CONFIG.scriptUrl) {
             showToast("Especifica la URL del Apps Script en el Panel Admin.", "warning");
             setDemoMode(true);
@@ -1044,6 +1087,700 @@ function setDemoMode(active) {
     dom.modeToggle.checked = active;
     updateConnectionStatus(active);
     loadData();
+}
+
+// ==========================================
+// SERVICIO FIREBASE FIRESTORE (TIEMPO REAL)
+// ==========================================
+
+function updateFirebaseBadge(status, text) {
+    if (!dom.firebaseStatusBadge) return;
+    dom.firebaseStatusBadge.className = `firebase-config-badge ${status}`;
+    let iconName = 'alert-circle';
+    if (status === 'online') iconName = 'check-circle';
+    else if (status === 'pending') iconName = 'loader';
+    dom.firebaseStatusBadge.innerHTML = `<i data-lucide="${iconName}" style="width:13px; height:13px;"></i> ${text}`;
+    if (window.lucide) lucide.createIcons();
+}
+
+function updateLastBackupDisplay(timestamp) {
+    if (dom.displayLastBackupTime) {
+        dom.displayLastBackupTime.textContent = timestamp ? formatDisplayDate(timestamp) : "Sin registros recientes";
+    }
+}
+
+function parseFirebaseConfigInput(rawText) {
+    if (!rawText || !rawText.trim()) throw new Error("El campo de configuración está vacío.");
+    let text = rawText.trim();
+    
+    // Si viene en formato JS "const firebaseConfig = { ... };"
+    if (text.includes('{') && text.includes('}')) {
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        text = text.substring(start, end + 1);
+    }
+    
+    // Intentar JSON directo
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        // Normalizar claves JS no entrecomilladas (ej: apiKey: "..." -> "apiKey": "...")
+        try {
+            const normalized = text
+                .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":')
+                .replace(/'/g, '"')
+                .replace(/,\s*}/g, '}');
+            return JSON.parse(normalized);
+        } catch (e2) {
+            throw new Error("No se pudo interpretar el formato de configuración. Asegúrate de copiar el objeto completo { apiKey: ..., projectId: ... }");
+        }
+    }
+}
+
+function initFirebaseService() {
+    if (typeof firebase === 'undefined') {
+        console.warn("SDK de Firebase no cargado aún en el navegador.");
+        updateFirebaseBadge('offline', 'SDK no disponible');
+        return false;
+    }
+
+    if (!CONFIG.firebaseConfig || !CONFIG.firebaseConfig.projectId) {
+        updateFirebaseBadge('offline', 'No configurado');
+        return false;
+    }
+
+    if (CONFIG.backendMode !== 'firebase') {
+        updateFirebaseBadge('pending', 'Inactivo (Modo Sheets)');
+        return false;
+    }
+
+    try {
+        updateFirebaseBadge('pending', 'Conectando...');
+        
+        // Inicializar app si no existe
+        if (!firebase.apps.length) {
+            firebase.initializeApp(CONFIG.firebaseConfig);
+        }
+        
+        firestoreDb = firebase.firestore();
+        
+        // Activar persistencia offline de Firestore
+        try {
+            firestoreDb.enablePersistence({ synchronizeTabs: true }).catch(err => {
+                if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
+                    console.warn("Aviso persistencia Firestore:", err.message);
+                }
+            });
+        } catch (persErr) {
+            console.warn("Aviso persistencia:", persErr);
+        }
+
+        // Limpiar escuchadores previos
+        firestoreUnsubscribers.forEach(fn => { try { fn(); } catch(e){} });
+        firestoreUnsubscribers = [];
+
+        // 1. Escuchar Inventario en Tiempo Real
+        const unsubInv = firestoreDb.collection('inventory').onSnapshot(snap => {
+            if (snap.empty && appState.inventory.length > 0) return;
+            const items = [];
+            snap.forEach(doc => {
+                const data = doc.data();
+                items.push({ id: doc.id, ...data });
+            });
+            if (items.length > 0) {
+                appState.inventory = groupInventoryItems(items);
+                appState.categories = [...new Set(appState.inventory.map(i => i.category))];
+                renderLoansModule();
+                renderCategoryDropdown();
+                if (appState.isAdminLoggedIn) {
+                    updateAdminDashboard();
+                    renderAdminLoanEquipmentFilters();
+                    renderAdminEquipmentList();
+                }
+            }
+        }, err => {
+            console.warn("Aviso escuchador inventario Firestore:", err);
+            updateFirebaseBadge('offline', 'Permiso denegado');
+        });
+        firestoreUnsubscribers.push(unsubInv);
+
+        // 2. Escuchar Préstamos en Tiempo Real
+        const unsubLoans = firestoreDb.collection('loans').onSnapshot(snap => {
+            const loans = [];
+            snap.forEach(doc => {
+                loans.push({ docId: doc.id, ...doc.data() });
+            });
+            appState.loans = loans;
+            renderLoansModule();
+            if (appState.isAdminLoggedIn) {
+                updateAdminDashboard();
+                renderAdminLoans(appState.activeAdminLoanFilter);
+            }
+        }, err => {
+            console.warn("Aviso escuchador préstamos Firestore:", err);
+        });
+        firestoreUnsubscribers.push(unsubLoans);
+
+        // 3. Escuchar Alumnos en Tiempo Real
+        const unsubStudents = firestoreDb.collection('students').onSnapshot(snap => {
+            const students = [];
+            snap.forEach(doc => {
+                students.push({ ...doc.data() });
+            });
+            if (students.length > 0) {
+                appState.students = students;
+                if (appState.isAdminLoggedIn) {
+                    renderAdminStudentsList();
+                }
+            }
+        }, err => {
+            console.warn("Aviso escuchador alumnos Firestore:", err);
+        });
+        firestoreUnsubscribers.push(unsubStudents);
+
+        // 4. Escuchar Metadatos (Asignaturas, Último respaldo)
+        const unsubMeta = firestoreDb.collection('settings').doc('metadata').onSnapshot(doc => {
+            if (doc.exists) {
+                const meta = doc.data();
+                if (meta.subjects && Array.isArray(meta.subjects)) {
+                    appState.subjects = meta.subjects;
+                    renderSubjectsDropdown();
+                }
+                if (meta.lastBackupToSheets) {
+                    updateLastBackupDisplay(meta.lastBackupToSheets);
+                }
+            }
+        }, err => {
+            console.warn("Aviso escuchador metadata Firestore:", err);
+        });
+        firestoreUnsubscribers.push(unsubMeta);
+
+        updateFirebaseBadge('online', 'En línea (Tiempo Real)');
+        setConnectionState('firebase');
+        return true;
+    } catch (e) {
+        console.error("Error al inicializar Firebase Firestore:", e);
+        updateFirebaseBadge('offline', 'Error de conexión');
+        return false;
+    }
+}
+
+async function testFirebaseConnection() {
+    if (!CONFIG.firebaseConfig) {
+        showToast("Primero ingresa y guarda la configuración de Firebase.", "warning");
+        return;
+    }
+    
+    updateFirebaseBadge('pending', 'Probando...');
+    showToast("Probando conexión con Firestore...", "info");
+    
+    try {
+        if (!firebase.apps.length) {
+            firebase.initializeApp(CONFIG.firebaseConfig);
+        }
+        const db = firebase.firestore();
+        // Prueba de lectura y escritura en colección de diagnóstico
+        const testRef = db.collection('settings').doc('ping');
+        await testRef.set({ timestamp: getNowFormatted(), agent: 'AVP UFRO PWA' }, { merge: true });
+        
+        updateFirebaseBadge('online', 'En línea (Tiempo Real)');
+        setConnectionState('firebase');
+        showToast("¡Conexión con Firebase Firestore exitosa!", "success");
+    } catch (err) {
+        console.error("Error probando Firebase:", err);
+        updateFirebaseBadge('offline', 'Fallo conexión');
+        showToast(`Fallo en Firebase: ${err.message}. Revisa tus reglas de seguridad en la consola.`, "danger");
+    }
+}
+
+async function seedCurrentDataToFirebase() {
+    if (!firestoreDb) {
+        const ok = initFirebaseService();
+        if (!ok || !firestoreDb) {
+            showToast("Debes conectar Firebase antes de sembrar los datos.", "warning");
+            return;
+        }
+    }
+
+    if (!confirm(`¿Deseas migrar todo el catálogo actual (${appState.inventory.length} equipos, ${appState.students.length} alumnos y ${appState.loans.length} préstamos) a Firebase Firestore? Esta acción sembrará la base de datos en la nube.`)) {
+        return;
+    }
+
+    showToast("Subiendo catálogo a Firebase Firestore...", "info");
+
+    try {
+        let totalBatches = 0;
+        
+        // 1. Subir Inventario
+        const invChunks = chunkArray(appState.inventory, 300);
+        for (const chunk of invChunks) {
+            const batch = firestoreDb.batch();
+            chunk.forEach(item => {
+                const docId = (item.id || item.name).toString().replace(/[\/\s]/g, '_');
+                const docRef = firestoreDb.collection('inventory').doc(docId);
+                batch.set(docRef, {
+                    category: item.category || "Otros",
+                    name: item.name || "",
+                    total: parseInt(item.total) || 0,
+                    available: parseInt(item.available) || 0,
+                    codes: Array.isArray(item.codes) ? item.codes : [],
+                    image: item.image || "",
+                    description: item.description || ""
+                }, { merge: true });
+            });
+            await batch.commit();
+            totalBatches++;
+        }
+
+        // 2. Subir Alumnos
+        const studentChunks = chunkArray(appState.students, 300);
+        for (const chunk of studentChunks) {
+            const batch = firestoreDb.batch();
+            chunk.forEach(st => {
+                const cleanRut = (st.rut || '').replace(/[^0-9kK]/g, '').toLowerCase() || 'st_' + Math.random().toString(36).substr(2, 6);
+                const docRef = firestoreDb.collection('students').doc(cleanRut);
+                batch.set(docRef, {
+                    rut: st.rut || "",
+                    name: st.name || "",
+                    lastname: st.lastname || "",
+                    email: st.email || "",
+                    fono: st.fono || "",
+                    status: st.status || "Activo",
+                    debt: st.debt || "",
+                    blockDate: st.blockDate || ""
+                }, { merge: true });
+            });
+            await batch.commit();
+            totalBatches++;
+        }
+
+        // 3. Subir Préstamos
+        const loanChunks = chunkArray(appState.loans, 300);
+        for (const chunk of loanChunks) {
+            const batch = firestoreDb.batch();
+            chunk.forEach(l => {
+                const docRef = firestoreDb.collection('loans').doc();
+                batch.set(docRef, {
+                    id: l.id || "",
+                    rut: l.rut || "",
+                    name: l.name || "",
+                    email: l.email || "",
+                    item: l.item || "",
+                    code: l.code || "Pte. Entrega",
+                    status: l.status || "Solicitado",
+                    dateOut: l.dateOut || "",
+                    dateDeliver: l.dateDeliver || "",
+                    dateIn: l.dateIn || "",
+                    progRetiro: l.progRetiro || "",
+                    progDevolucion: l.progDevolucion || "",
+                    subject: l.subject || "",
+                    obs: l.obs || "",
+                    obsReturn: l.obsReturn || "",
+                    daysOverdue: l.daysOverdue || 0
+                });
+            });
+            await batch.commit();
+            totalBatches++;
+        }
+
+        // 4. Subir Metadatos
+        await firestoreDb.collection('settings').doc('metadata').set({
+            subjects: appState.subjects || [],
+            categories: appState.categories || [],
+            lastSeeded: getNowFormatted(),
+            lastBackupToSheets: getNowFormatted()
+        }, { merge: true });
+
+        showToast(`¡Migración completada con éxito! Datos disponibles 100% en vivo en Firebase.`, "success");
+    } catch (err) {
+        console.error("Error al sembrar en Firestore:", err);
+        showToast(`Error durante la migración: ${err.message}`, "danger");
+    }
+}
+
+function chunkArray(arr, size) {
+    const chunks = [];
+    for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+}
+
+// ------------------------------------------
+// OPERACIONES TRANSACCIONALES DE PRÉSTAMO EN FIRESTORE
+// ------------------------------------------
+
+async function executeCheckoutFirebase(loanItems, progRetiro, progDevolucion, subject) {
+    if (dom.btnConfirmLoan) {
+        dom.btnConfirmLoan.disabled = true;
+        dom.btnConfirmLoan.innerHTML = '<i data-lucide="loader" class="spin"></i> Registrando en tiempo real...';
+        if (window.lucide) lucide.createIcons();
+    }
+
+    try {
+        const studentFullName = appState.validatedStudent.name + " " + (appState.validatedStudent.lastname || "");
+        const dateStr = getNowFormatted();
+        
+        // Calcular próximo ID de préstamo
+        let nextNumber = 1001;
+        if (appState.loans && appState.loans.length > 0) {
+            appState.loans.forEach(l => {
+                if (l.id && l.id.toString().startsWith("L-")) {
+                    const num = parseInt(l.id.toString().replace("L-", ""), 10);
+                    if (!isNaN(num) && num >= nextNumber) {
+                        nextNumber = num + 1;
+                    }
+                }
+            });
+        }
+        const loanId = "L-" + nextNumber;
+
+        const batch = firestoreDb.batch();
+
+        // 1. Crear documento de préstamo para cada ítem
+        loanItems.forEach(item => {
+            const loanRef = firestoreDb.collection('loans').doc();
+            batch.set(loanRef, {
+                id: loanId,
+                rut: appState.validatedStudent.rut,
+                name: studentFullName,
+                email: appState.validatedStudent.email,
+                item: item.name,
+                code: "Pte. Entrega",
+                status: "Solicitado",
+                dateOut: dateStr,
+                dateDeliver: "",
+                dateIn: "",
+                progRetiro: progRetiro,
+                progDevolucion: progDevolucion,
+                subject: subject,
+                obs: "",
+                obsReturn: "",
+                daysOverdue: 0
+            });
+        });
+
+        // 2. Descontar stock disponible en la colección de inventario
+        for (const item of loanItems) {
+            const cleanName = item.name.trim().toLowerCase();
+            const invSnap = await firestoreDb.collection('inventory').get();
+            invSnap.forEach(doc => {
+                const d = doc.data();
+                if ((d.name || '').trim().toLowerCase() === cleanName) {
+                    batch.update(doc.ref, {
+                        available: firebase.firestore.FieldValue.increment(-1)
+                    });
+                }
+            });
+        }
+
+        await batch.commit();
+
+        showToast("¡Solicitud registrada en tiempo real en Firebase!", "success");
+        resetCheckoutFlow();
+        
+        showSuccessModal({
+            id: loanId,
+            student: studentFullName,
+            email: appState.validatedStudent.email,
+            items: loanItems,
+            progRetiro: progRetiro,
+            progDevolucion: progDevolucion
+        });
+
+        // Envío asíncrono de correo mediante Google Apps Script si está disponible
+        if (CONFIG.scriptUrl) {
+            fetchWithTimeout(`${CONFIG.scriptUrl}?action=createLoan`, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    requestId: 'fs_' + Date.now(),
+                    student: appState.validatedStudent,
+                    items: loanItems,
+                    progRetiro: progRetiro,
+                    progDevolucion: progDevolucion,
+                    subject: subject,
+                    timestamp: dateStr,
+                    skipSheetWrite: true
+                })
+            }, 6000).catch(err => console.log("Notificación correo segundo plano enviada"));
+        }
+    } catch (e) {
+        console.error("Error en checkout Firebase:", e);
+        showToast(`Error al procesar solicitud: ${e.message}`, "danger");
+        if (dom.btnConfirmLoan) dom.btnConfirmLoan.disabled = false;
+    } finally {
+        if (dom.btnConfirmLoan) {
+            dom.btnConfirmLoan.innerHTML = '<i data-lucide="send"></i> Enviar Solicitud de Préstamo';
+            if (window.lucide) lucide.createIcons();
+        }
+    }
+}
+
+async function executeDeliverLoanFirebase(loanId, activeItems, itemsPayload, cancelledItems, globalObsVal) {
+    showToast("Confirmando entrega en tiempo real...", "info");
+    const dateStr = getNowFormatted();
+
+    try {
+        const batch = firestoreDb.batch();
+        const unusedPayload = [...(itemsPayload || [])];
+
+        // 1. Obtener documentos actuales de este préstamo
+        const loansSnap = await firestoreDb.collection('loans').where('id', '==', loanId).get();
+        const existingDocs = [];
+        loansSnap.forEach(d => existingDocs.push({ ref: d.ref, data: d.data() }));
+
+        // 2. Procesar ítems activos entregados
+        for (const tempItem of activeItems) {
+            const cleanName = (tempItem.item || '').trim().toLowerCase();
+            let payloadIdx = unusedPayload.findIndex(p => 
+                (p.name || '').trim().toLowerCase() === cleanName && 
+                (tempItem.assignedCode ? p.code === tempItem.assignedCode : true)
+            );
+            if (payloadIdx === -1) {
+                payloadIdx = unusedPayload.findIndex(p => (p.name || '').trim().toLowerCase() === cleanName);
+            }
+            const assigned = payloadIdx !== -1 ? unusedPayload.splice(payloadIdx, 1)[0] : null;
+            const finalCode = assigned ? assigned.code : (tempItem.assignedCode || "Pte. Entrega");
+
+            if (tempItem.isNew) {
+                // Equipo extra agregado en ventanilla
+                const newDocRef = firestoreDb.collection('loans').doc();
+                batch.set(newDocRef, {
+                    id: loanId,
+                    rut: tempItem.rut,
+                    name: tempItem.name,
+                    email: tempItem.email,
+                    item: tempItem.item,
+                    code: finalCode,
+                    status: "Retirado",
+                    dateOut: tempItem.dateOut,
+                    dateDeliver: dateStr,
+                    dateIn: "",
+                    progRetiro: tempItem.progRetiro,
+                    progDevolucion: tempItem.progDevolucion,
+                    subject: tempItem.subject,
+                    obs: globalObsVal,
+                    obsReturn: "",
+                    daysOverdue: 0
+                });
+
+                // Descontar stock del extra
+                const invSnap = await firestoreDb.collection('inventory').get();
+                invSnap.forEach(d => {
+                    if ((d.data().name || '').trim().toLowerCase() === cleanName) {
+                        batch.update(d.ref, { available: firebase.firestore.FieldValue.increment(-1) });
+                    }
+                });
+            } else {
+                // Actualizar ítem solicitado existente
+                const matchDoc = existingDocs.find(ed => 
+                    (ed.data.item || '').trim().toLowerCase() === cleanName && 
+                    ed.data.status === 'Solicitado'
+                );
+                if (matchDoc) {
+                    batch.update(matchDoc.ref, {
+                        status: "Retirado",
+                        code: finalCode,
+                        dateDeliver: dateStr,
+                        obs: globalObsVal
+                    });
+                }
+            }
+        }
+
+        // 3. Procesar ítems anulados en la entrega
+        if (Array.isArray(cancelledItems)) {
+            for (const tempItem of cancelledItems) {
+                if (!tempItem.isNew) {
+                    const cleanName = (tempItem.item || '').trim().toLowerCase();
+                    const matchDoc = existingDocs.find(ed => 
+                        (ed.data.item || '').trim().toLowerCase() === cleanName && 
+                        ed.data.status === 'Solicitado'
+                    );
+                    if (matchDoc) {
+                        batch.update(matchDoc.ref, {
+                            status: "Anulado",
+                            code: "Anulado"
+                        });
+                        // Reincorporar stock
+                        const invSnap = await firestoreDb.collection('inventory').get();
+                        invSnap.forEach(d => {
+                            if ((d.data().name || '').trim().toLowerCase() === cleanName) {
+                                batch.update(d.ref, { available: firebase.firestore.FieldValue.increment(1) });
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        await batch.commit();
+        showToast("¡Entrega física confirmada en tiempo real!", "success");
+
+        // Enviar comprobante por correo si Apps Script está configurado
+        if (CONFIG.scriptUrl && itemsPayload && itemsPayload.length > 0) {
+            const firstItem = activeItems[0] || {};
+            fetchWithTimeout(`${CONFIG.scriptUrl}?action=deliverLoan`, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    loanId: loanId,
+                    items: itemsPayload,
+                    cancelledItems: cancelledItems || [],
+                    timestamp: dateStr,
+                    skipSheetWrite: true
+                })
+            }, 6000).catch(e => console.log("Correo de retiro enviado"));
+        }
+    } catch (e) {
+        console.error("Error confirmando entrega en Firebase:", e);
+        showToast(`Error al confirmar entrega: ${e.message}`, "danger");
+    }
+}
+
+async function executeReturnLoanFirebase(loanId, obsReturnVal) {
+    showToast("Procesando devolución en tiempo real...", "info");
+    const dateStr = getNowFormatted();
+
+    try {
+        const batch = firestoreDb.batch();
+        const loansSnap = await firestoreDb.collection('loans').where('id', '==', loanId).get();
+        const returnedItems = [];
+
+        for (const doc of loansSnap.docs) {
+            const data = doc.data();
+            if (data.status === 'Retirado') {
+                const days = getDaysOverdue(data);
+                batch.update(doc.ref, {
+                    status: "Devuelto",
+                    dateIn: dateStr,
+                    daysOverdue: days,
+                    obsReturn: obsReturnVal || ''
+                });
+
+                returnedItems.push({ name: data.item, code: data.code });
+
+                // Devolver stock en Inventario
+                const cleanName = (data.item || '').trim().toLowerCase();
+                const invSnap = await firestoreDb.collection('inventory').get();
+                invSnap.forEach(d => {
+                    if ((d.data().name || '').trim().toLowerCase() === cleanName) {
+                        batch.update(d.ref, { available: firebase.firestore.FieldValue.increment(1) });
+                    }
+                });
+            }
+        }
+
+        if (returnedItems.length === 0) {
+            showToast("No se encontraron ítems activos para devolver.", "warning");
+            return;
+        }
+
+        await batch.commit();
+        showToast(`¡Devolución de ${returnedItems.length} equipo(s) procesada en tiempo real!`, "success");
+
+        // Enviar correo de comprobante de devolución
+        if (CONFIG.scriptUrl && returnedItems.length > 0) {
+            fetchWithTimeout(`${CONFIG.scriptUrl}?action=returnLoan`, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    loanId: loanId,
+                    timestamp: dateStr,
+                    obsReturn: obsReturnVal || '',
+                    items: returnedItems,
+                    skipSheetWrite: true
+                })
+            }, 6000).catch(e => console.log("Correo de devolución enviado"));
+        }
+    } catch (e) {
+        console.error("Error en devolución Firebase:", e);
+        showToast(`Error al procesar devolución: ${e.message}`, "danger");
+    }
+}
+
+async function executeCancelLoanFirebase(loanId) {
+    showToast("Anulando préstamo en tiempo real...", "info");
+
+    try {
+        const batch = firestoreDb.batch();
+        const loansSnap = await firestoreDb.collection('loans').where('id', '==', loanId).get();
+
+        for (const doc of loansSnap.docs) {
+            const data = doc.data();
+            if (data.status === 'Solicitado' || data.status === 'Retirado') {
+                batch.update(doc.ref, {
+                    status: "Anulado",
+                    code: "Anulado"
+                });
+
+                // Devolver stock a Inventario
+                const cleanName = (data.item || '').trim().toLowerCase();
+                const invSnap = await firestoreDb.collection('inventory').get();
+                invSnap.forEach(d => {
+                    if ((d.data().name || '').trim().toLowerCase() === cleanName) {
+                        batch.update(d.ref, { available: firebase.firestore.FieldValue.increment(1) });
+                    }
+                });
+            }
+        }
+
+        await batch.commit();
+        showToast("Solicitud/Préstamo anulado y stock liberado en tiempo real.", "success");
+    } catch (e) {
+        console.error("Error al anular en Firebase:", e);
+        showToast(`Error al anular préstamo: ${e.message}`, "danger");
+    }
+}
+
+// ------------------------------------------
+// RESPALDO DE SEGURIDAD A GOOGLE SHEETS
+// ------------------------------------------
+
+async function backupFirestoreToGoogleSheets() {
+    if (!CONFIG.scriptUrl) {
+        showToast("Configura la URL de Google Apps Script para respaldar.", "warning");
+        return;
+    }
+
+    showToast("Generando respaldo de seguridad en Google Sheets...", "info");
+    const timestamp = getNowFormatted();
+
+    try {
+        const payload = {
+            timestamp: timestamp,
+            loans: appState.loans || [],
+            inventory: appState.inventory || [],
+            students: appState.students || []
+        };
+
+        const response = await fetchWithRetry(`${CONFIG.scriptUrl}?action=backupSnapshot`, {
+            method: 'POST',
+            mode: 'cors',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify(payload)
+        }, 1, 1500, 35000);
+
+        const data = await response.json();
+        if (data.status === 'success') {
+            updateLastBackupDisplay(timestamp);
+            if (firestoreDb) {
+                firestoreDb.collection('settings').doc('metadata').set({
+                    lastBackupToSheets: timestamp
+                }, { merge: true }).catch(e => {});
+            }
+            showToast(`¡Respaldo exitoso! Se sincronizaron ${payload.loans.length} préstamos en Google Sheets.`, "success");
+        } else {
+            showToast(`Aviso en respaldo: ${data.message || 'Error del servidor'}`, "warning");
+        }
+    } catch (err) {
+        console.error("Error al respaldar en Google Sheets:", err);
+        showToast(`Fallo al respaldar en Google Sheets: ${err.message}`, "danger");
+    }
 }
 
 // ==========================================
@@ -1532,6 +2269,78 @@ function initEventListeners() {
     if (dom.btnExportExcel) {
         dom.btnExportExcel.addEventListener('click', () => {
             exportLoansToExcel();
+        });
+    }
+
+    if (dom.btnManualBackupSheet) {
+        dom.btnManualBackupSheet.addEventListener('click', () => {
+            backupFirestoreToGoogleSheets();
+        });
+    }
+
+    if (dom.btnTriggerBackupNow) {
+        dom.btnTriggerBackupNow.addEventListener('click', () => {
+            backupFirestoreToGoogleSheets();
+        });
+    }
+
+    if (dom.selectBackendMode) {
+        dom.selectBackendMode.value = CONFIG.backendMode || 'firebase';
+        dom.selectBackendMode.addEventListener('change', (e) => {
+            const mode = e.target.value;
+            CONFIG.backendMode = mode;
+            localStorage.setItem('audiolend_backend_mode', mode);
+            if (mode === 'firebase') {
+                const ok = initFirebaseService();
+                if (ok) {
+                    showToast("Cambiado a modo Firebase Firestore en tiempo real", "success");
+                } else {
+                    showToast("Modo Firebase seleccionado. Ingresa las credenciales abajo para conectar.", "info");
+                }
+            } else {
+                if (firestoreUnsubscribers) {
+                    firestoreUnsubscribers.forEach(fn => { try { fn(); } catch(err){} });
+                    firestoreUnsubscribers = [];
+                }
+                updateFirebaseBadge('pending', 'Inactivo (Modo Sheets)');
+                loadData(true);
+                showToast("Cambiado a modo Google Sheets tradicional", "info");
+            }
+        });
+    }
+
+    if (dom.firebaseConfigInput && CONFIG.firebaseConfig) {
+        dom.firebaseConfigInput.value = JSON.stringify(CONFIG.firebaseConfig, null, 2);
+    }
+
+    if (dom.btnSaveFirebaseConfig) {
+        dom.btnSaveFirebaseConfig.addEventListener('click', () => {
+            try {
+                const val = dom.firebaseConfigInput ? dom.firebaseConfigInput.value : '';
+                const parsed = parseFirebaseConfigInput(val);
+                if (!parsed.projectId) {
+                    showToast("La configuración debe incluir al menos el 'projectId'.", "danger");
+                    return;
+                }
+                CONFIG.firebaseConfig = parsed;
+                localStorage.setItem('audiolend_firebase_config', JSON.stringify(parsed));
+                showToast("Configuración de Firebase guardada con éxito.", "success");
+                initFirebaseService();
+            } catch (err) {
+                showToast(`Error de configuración: ${err.message}`, "danger");
+            }
+        });
+    }
+
+    if (dom.btnTestFirebase) {
+        dom.btnTestFirebase.addEventListener('click', () => {
+            testFirebaseConnection();
+        });
+    }
+
+    if (dom.btnSeedFirebase) {
+        dom.btnSeedFirebase.addEventListener('click', () => {
+            seedCurrentDataToFirebase();
         });
     }
     
@@ -2174,6 +2983,8 @@ async function processLoanCheckout() {
             progDevolucion: formattedDateIn
         });
         loadData();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        executeCheckoutFirebase(loanItems, formattedDateOut, formattedDateIn, subject);
     } else {
         executeCheckoutApi(loanItems, formattedDateOut, formattedDateIn, subject);
     }
@@ -2546,6 +3357,8 @@ async function confirmPhysicalDelivery() {
                 renderAdminLoans(appState.activeAdminLoanFilter);
             }
             renderLoansModule();
+        } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+            executeCancelLoanFirebase(loanId);
         } else {
             saveCurrentStateToOfflineCache();
             showToast("Solicitud anulada. Sincronizando con Google Sheets...", "info");
@@ -2606,6 +3419,8 @@ async function confirmPhysicalDelivery() {
             renderAdminLoans(appState.activeAdminLoanFilter);
         }
         renderLoansModule();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        executeDeliverLoanFirebase(loanId, activeItems, itemsPayload, cancelledPayload, globalObsVal);
     } else {
         saveCurrentStateToOfflineCache();
         showToast(`Retiro físico confirmado. Sincronizando con Google Sheets...`, "info");
@@ -2706,6 +3521,8 @@ async function confirmReturnCheckout() {
             renderAdminLoans(appState.activeAdminLoanFilter);
         }
         renderLoansModule();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        executeReturnLoanFirebase(loanId, obsReturnVal);
     } else {
         applyReturnOptimisticState(loanId, obsReturnVal);
         saveCurrentStateToOfflineCache();
@@ -2776,6 +3593,8 @@ async function processCancelLoan(loanId) {
             renderAdminLoans(appState.activeAdminLoanFilter);
         }
         renderLoansModule();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        executeCancelLoanFirebase(loanId);
     } else {
         saveCurrentStateToOfflineCache();
         showToast("Anulación aplicada. Sincronizando con Google Sheets...", "info");
@@ -4440,6 +5259,30 @@ async function saveEquipmentConfig() {
         renderLoansModule();
         renderAdminLoanEquipmentFilters();
         updateAdminDashboard();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        showToast("Guardando equipo en Firebase...", "info");
+        try {
+            const docId = name.replace(/[\/\s]/g, '_');
+            await firestoreDb.collection('inventory').doc(docId).set({
+                id: docId,
+                name: name,
+                category: cleanCat,
+                total: total,
+                available: total,
+                codes: codes,
+                image: image || '',
+                description: description || ''
+            });
+            showToast(`Equipo "${name}" guardado en tiempo real en Firebase.`, "success");
+            dom.formAddEquipment.reset();
+            if (!appState.categories.some(c => cleanCategoryName(c) === cleanCat)) {
+                appState.categories.push(cleanCat);
+            }
+            renderCategoryDropdown(cleanCat);
+        } catch (e) {
+            console.error("Error guardando equipo en Firebase:", e);
+            showToast(`Error al guardar en Firebase: ${e.message}`, "danger");
+        }
     } else {
         showToast("Agregando equipo a Google Sheets...", "info");
         try {
@@ -4507,6 +5350,19 @@ async function saveStudentConfig() {
         if (dom.stBlockDateGroup) dom.stBlockDateGroup.classList.add('hidden');
         renderAdminConfigLists();
         updateAdminDashboard();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        showToast("Registrando estudiante en Firebase...", "info");
+        try {
+            const studentId = cleanRut(rut);
+            await firestoreDb.collection('students').doc(studentId).set(payload);
+            showToast(`Estudiante "${nameFull}" registrado en tiempo real en Firebase.`, "success");
+            dom.formAddStudent.reset();
+            dom.stDebtGroup.classList.add('hidden');
+            if (dom.stBlockDateGroup) dom.stBlockDateGroup.classList.add('hidden');
+        } catch (e) {
+            console.error("Error guardando estudiante en Firebase:", e);
+            showToast(`Error al guardar en Firebase: ${e.message}`, "danger");
+        }
     } else {
         showToast("Registrando estudiante...", "info");
         try {
@@ -4543,6 +5399,27 @@ async function deleteEquipmentConfig(id, name) {
         renderLoansModule();
         renderAdminLoanEquipmentFilters();
         updateAdminDashboard();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        showToast("Eliminando equipo en Firebase...", "info");
+        try {
+            const snap = await firestoreDb.collection('inventory').get();
+            const batch = firestoreDb.batch();
+            let count = 0;
+            snap.forEach(doc => {
+                const d = doc.data();
+                if ((d.name || '').trim().toLowerCase() === name.trim().toLowerCase() || doc.id === id.toString()) {
+                    batch.delete(doc.ref);
+                    count++;
+                }
+            });
+            if (count > 0) {
+                await batch.commit();
+            }
+            showToast(`Equipo "${name}" eliminado en tiempo real de Firebase.`, "info");
+        } catch (e) {
+            console.error("Error eliminando equipo en Firebase:", e);
+            showToast(`Error al eliminar en Firebase: ${e.message}`, "danger");
+        }
     } else {
         showToast("Eliminando equipo...", "info");
         try {
@@ -4574,6 +5451,27 @@ async function deleteStudentConfig(rut, name) {
         showToast(`Estudiante "${name}" eliminado.`, "info");
         renderAdminConfigLists();
         updateAdminDashboard();
+    } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        showToast("Eliminando estudiante en Firebase...", "info");
+        try {
+            const snap = await firestoreDb.collection('students').get();
+            const batch = firestoreDb.batch();
+            let count = 0;
+            snap.forEach(doc => {
+                const d = doc.data();
+                if (cleanRut(d.rut || '') === cleanRut(rut)) {
+                    batch.delete(doc.ref);
+                    count++;
+                }
+            });
+            if (count > 0) {
+                await batch.commit();
+            }
+            showToast(`Estudiante "${name}" eliminado en tiempo real de Firebase.`, "info");
+        } catch (e) {
+            console.error("Error eliminando estudiante en Firebase:", e);
+            showToast(`Error al eliminar en Firebase: ${e.message}`, "danger");
+        }
     } else {
         showToast("Eliminando estudiante...", "info");
         try {
@@ -4612,6 +5510,23 @@ async function toggleStudentSanction(rut, name, blocked) {
             showToast(`Sanción levantada para "${name}".`, "success");
             renderAdminConfigLists();
             updateAdminDashboard();
+        } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+            showToast("Levantando sanción en Firebase...", "info");
+            try {
+                const snap = await firestoreDb.collection('students').get();
+                const batch = firestoreDb.batch();
+                snap.forEach(doc => {
+                    const d = doc.data();
+                    if (cleanRut(d.rut || '') === cleanRut(rut)) {
+                        batch.update(doc.ref, { status: 'Activo', debt: '', blockDate: '' });
+                    }
+                });
+                await batch.commit();
+                showToast(`Sanción levantada para "${name}" en tiempo real.`, "success");
+            } catch (e) {
+                console.error("Error levantando sanción en Firebase:", e);
+                showToast(`Error al levantar sanción: ${e.message}`, "danger");
+            }
         } else {
             showToast("Procesando levantamiento de sanción...", "info");
             try {
@@ -4651,6 +5566,23 @@ async function toggleStudentSanction(rut, name, blocked) {
             showToast(`Estudiante "${name}" bloqueado.`, "info");
             renderAdminConfigLists();
             updateAdminDashboard();
+        } else if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+            showToast("Aplicando bloqueo en Firebase...", "info");
+            try {
+                const snap = await firestoreDb.collection('students').get();
+                const batch = firestoreDb.batch();
+                snap.forEach(doc => {
+                    const d = doc.data();
+                    if (cleanRut(d.rut || '') === cleanRut(rut)) {
+                        batch.update(doc.ref, { status: 'Bloqueado', debt: finalReason, blockDate: dateNow });
+                    }
+                });
+                await batch.commit();
+                showToast(`Estudiante "${name}" bloqueado en tiempo real.`, "info");
+            } catch (e) {
+                console.error("Error bloqueando estudiante en Firebase:", e);
+                showToast(`Error al bloquear estudiante: ${e.message}`, "danger");
+            }
         } else {
             showToast("Procesando bloqueo...", "info");
             try {

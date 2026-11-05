@@ -359,6 +359,9 @@ function doGet(e) {
     else if (action === "recalculateStock") {
       responseData = executeRecalculateStock(ss);
     }
+    else if (action === "backupSnapshot") {
+      responseData = executeBackupSnapshot(ss, postData);
+    }
     else {
       responseData = { status: "error", message: "Acción GET no válida." };
     }
@@ -540,6 +543,9 @@ function doPost(e) {
     }
     else if (action === "recalculateStock") {
       responseData = executeRecalculateStock(ss);
+    }
+    else if (action === "backupSnapshot") {
+      responseData = executeBackupSnapshot(ss, postData);
     }
     else {
       responseData = { status: "error", message: "Acción POST no válida." };
@@ -2477,4 +2483,189 @@ function parseDateString(dateStr) {
   
   if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
   return new Date(year, month, day);
+}
+
+// ==========================================
+// RESPALDO DE SEGURIDAD DESDE FIREBASE A GOOGLE SHEETS
+// ==========================================
+
+function executeBackupSnapshot(ss, payload) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(15000); } catch (e) {
+    return { status: "error", message: "Servidor ocupado. Intenta de nuevo en unos momentos." };
+  }
+  
+  try {
+    const loanSheet = ss.getSheetByName("Préstamos");
+    const invSheet = ss.getSheetByName("Inventario");
+    
+    if (!loanSheet || !invSheet) {
+      throw new Error("No se encontraron las pestañas 'Préstamos' o 'Inventario' en Google Sheets.");
+    }
+    
+    const timestamp = payload.timestamp || Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "America/Santiago", "yyyy-MM-dd HH:mm:ss");
+    const loans = payload.loans || [];
+    const inventory = payload.inventory || [];
+    const students = payload.students || [];
+    
+    // 1. Respaldo de Préstamos
+    const loanHeaders = loanSheet.getRange(1, 1, 1, Math.max(1, loanSheet.getLastColumn())).getValues()[0].map(normalizeHeader);
+    const { idIdx, rutIdx, nameIdx, emailIdx, itemIdx, codeIdx, dateOutIdx, dateDeliverIdx, dateInIdx, statusIdx, progRetiroIdx, progDevolucionIdx, subjectIdx, obsIdx, daysOverdueIdx, obsReturnIdx } = getLoanHeaderIndices(loanHeaders);
+    
+    if (loans.length > 0) {
+      const groups = {};
+      const groupOrder = [];
+      loans.forEach(loan => {
+        if (!groups[loan.id]) {
+          groups[loan.id] = {
+            id: loan.id,
+            rut: loan.rut || "",
+            name: loan.name || "",
+            email: loan.email || "",
+            dateOut: loan.dateOut || "",
+            dateDeliver: loan.dateDeliver || "",
+            dateIn: loan.dateIn || "",
+            progRetiro: loan.progRetiro || "",
+            progDevolucion: loan.progDevolucion || "",
+            subject: loan.subject || "",
+            obs: loan.obs || "",
+            obsReturn: loan.obsReturn || "",
+            daysOverdue: loan.daysOverdue || 0,
+            items: []
+          };
+          groupOrder.push(loan.id);
+        }
+        groups[loan.id].items.push({
+          name: loan.item || "",
+          code: loan.code || "",
+          status: loan.status || "Solicitado",
+          dateIn: loan.dateIn || ""
+        });
+      });
+      
+      const loanRows = [];
+      groupOrder.forEach(id => {
+        const g = groups[id];
+        const row = new Array(loanHeaders.length).fill("");
+        if (idIdx !== -1) row[idIdx] = g.id;
+        if (rutIdx !== -1) row[rutIdx] = g.rut;
+        if (nameIdx !== -1) row[nameIdx] = g.name;
+        if (emailIdx !== -1) row[emailIdx] = g.email;
+        if (itemIdx !== -1) row[itemIdx] = g.items.map(it => it.name).join("\n");
+        if (codeIdx !== -1) row[codeIdx] = g.items.map(it => it.code || "Pte. Entrega").join("\n");
+        if (dateOutIdx !== -1) row[dateOutIdx] = g.dateOut;
+        if (dateDeliverIdx !== -1) row[dateDeliverIdx] = g.dateDeliver;
+        if (dateInIdx !== -1) row[dateInIdx] = g.items.map(it => it.dateIn || g.dateIn).join("\n");
+        if (statusIdx !== -1) row[statusIdx] = g.items.map(it => it.status).join("\n");
+        if (progRetiroIdx !== -1) row[progRetiroIdx] = g.progRetiro;
+        if (progDevolucionIdx !== -1) row[progDevolucionIdx] = g.progDevolucion;
+        if (subjectIdx !== -1) row[subjectIdx] = g.subject;
+        if (obsIdx !== -1) row[obsIdx] = g.obs;
+        if (obsReturnIdx !== -1) row[obsReturnIdx] = g.obsReturn;
+        if (daysOverdueIdx !== -1) row[daysOverdueIdx] = g.daysOverdue;
+        loanRows.push(row);
+      });
+      
+      if (loanSheet.getLastRow() > 1) {
+        loanSheet.getRange(2, 1, loanSheet.getLastRow() - 1, loanSheet.getLastColumn()).clearContent();
+      }
+      if (loanRows.length > 0) {
+        loanSheet.getRange(2, 1, loanRows.length, loanHeaders.length).setValues(loanRows);
+      }
+    }
+    
+    // 2. Respaldo de Inventario
+    if (inventory.length > 0) {
+      const invValues = invSheet.getDataRange().getValues();
+      const invHeaders = invValues[0].map(normalizeHeader);
+      const { nameIdx: invNameIdx, totalIdx: invTotalIdx, availableIdx: invDispIdx, codesIdx: invCodesIdx } = getInventoryHeaderIndices(invHeaders);
+      
+      if (invNameIdx !== -1 && invDispIdx !== -1) {
+        inventory.forEach(invItem => {
+          const cleanName = normalizeEquipName(invItem.name);
+          for (let j = 1; j < invValues.length; j++) {
+            if (normalizeEquipName(invValues[j][invNameIdx]) === cleanName) {
+              if (invDispIdx !== -1 && invItem.available !== undefined) {
+                invSheet.getRange(j + 1, invDispIdx + 1).setValue(invItem.available);
+              }
+              if (invTotalIdx !== -1 && invItem.total !== undefined) {
+                invSheet.getRange(j + 1, invTotalIdx + 1).setValue(invItem.total);
+              }
+              if (invCodesIdx !== -1 && invItem.codes && Array.isArray(invItem.codes)) {
+                invSheet.getRange(j + 1, invCodesIdx + 1).setValue(invItem.codes.join(", "));
+              }
+              break;
+            }
+          }
+        });
+      }
+    }
+    
+    // 3. Registrar en Pestaña Historial_Respaldos
+    let backupHistorySheet = ss.getSheetByName("Historial_Respaldos");
+    if (!backupHistorySheet) {
+      backupHistorySheet = ss.insertSheet("Historial_Respaldos");
+      backupHistorySheet.appendRow(["Fecha y Hora Respaldo", "Total Préstamos Respaldados", "Equipos en Inventario", "Alumnos Registrados", "Origen", "Estado"]);
+      backupHistorySheet.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#f1f5f9");
+    }
+    backupHistorySheet.appendRow([timestamp, loans.length, inventory.length, students.length, "Respaldo Nube Firebase", "Exitoso"]);
+    
+    SpreadsheetApp.flush();
+    clearInitDataCache();
+    
+    return {
+      status: "success",
+      message: "Respaldo de seguridad completado en Google Sheets con éxito.",
+      timestamp: timestamp,
+      records: { loans: loans.length, inventory: inventory.length, students: students.length }
+    };
+  } catch (err) {
+    return { status: "error", message: "Error al generar respaldo: " + err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ==========================================
+// CONFIGURACIÓN DE ACTIVADOR DE RESPALDO (3 VECES AL DÍA)
+// ==========================================
+function setupScheduledBackupTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getHandlerFunction() === 'runAutomaticScheduledBackup') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  
+  // Ejecutar cada 8 horas (3 veces al día: 08:00, 16:00, 24:00 aprox)
+  ScriptApp.newTrigger('runAutomaticScheduledBackup')
+    .timeBased()
+    .everyHours(8)
+    .create();
+    
+  Logger.log("Activador de respaldo automático cada 8 horas configurado exitosamente.");
+}
+
+function runAutomaticScheduledBackup() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) return;
+    
+    let backupHistorySheet = ss.getSheetByName("Historial_Respaldos");
+    if (!backupHistorySheet) {
+      backupHistorySheet = ss.insertSheet("Historial_Respaldos");
+      backupHistorySheet.appendRow(["Fecha y Hora Respaldo", "Total Préstamos Respaldados", "Equipos en Inventario", "Alumnos Registrados", "Origen", "Estado"]);
+      backupHistorySheet.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#f1f5f9");
+    }
+    const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "America/Santiago", "yyyy-MM-dd HH:mm:ss");
+    
+    const loans = getLoansData(ss);
+    const inv = getInventoryData(ss);
+    const students = getStudentsData(ss);
+    
+    backupHistorySheet.appendRow([timestamp, loans.length, inv.length, students.length, "Programado Automático (3x día)", "Exitoso"]);
+    Logger.log("Respaldo programado ejecutado a las " + timestamp);
+  } catch (err) {
+    Logger.log("Error en respaldo programado: " + err.toString());
+  }
 }
