@@ -523,6 +523,9 @@ function doPost(e) {
     else if (action === "deleteEquipment") {
       responseData = executeDeleteEquipment(ss, postData);
     }
+    else if (action === "updateEquipment") {
+      responseData = executeUpdateEquipment(ss, postData);
+    }
     else if (action === "addStudent") {
       responseData = executeAddStudent(ss, postData);
     }
@@ -1931,6 +1934,38 @@ function executeDeleteEquipment(ss, payload) {
   if (rowIndex === -1) throw new Error("Equipo no encontrado.");
   sheet.deleteRow(rowIndex);
   return { status: "success", message: "Eliminado." };
+}
+
+function executeUpdateEquipment(ss, payload) {
+  const sheet = ss.getSheetByName("Inventario");
+  if (!sheet) throw new Error("No se encontró la pestaña 'Inventario'");
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(normalizeHeader);
+  const { categoryIdx, nameIdx, totalIdx, availableIdx, codesIdx, imageIdx, descriptionIdx } = getInventoryHeaderIndices(headers);
+  
+  const searchName = normalizeEquipName(payload.originalName || payload.name);
+  let rowIndex = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (normalizeEquipName(values[i][nameIdx]) === searchName) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+  if (rowIndex === -1) throw new Error("Equipo no encontrado en la pestaña Inventario.");
+  
+  if (nameIdx !== -1 && payload.name) sheet.getRange(rowIndex, nameIdx + 1).setValue(payload.name);
+  if (categoryIdx !== -1 && payload.category) sheet.getRange(rowIndex, categoryIdx + 1).setValue(cleanCategoryGAS(payload.category));
+  if (totalIdx !== -1 && payload.total !== undefined) sheet.getRange(rowIndex, totalIdx + 1).setValue(payload.total);
+  if (availableIdx !== -1 && payload.available !== undefined) sheet.getRange(rowIndex, availableIdx + 1).setValue(payload.available);
+  if (codesIdx !== -1 && payload.codes) {
+    const codesStr = Array.isArray(payload.codes) ? payload.codes.join(", ") : payload.codes.toString();
+    sheet.getRange(rowIndex, codesIdx + 1).setValue(codesStr);
+  }
+  if (imageIdx !== -1 && payload.image !== undefined) sheet.getRange(rowIndex, imageIdx + 1).setValue(payload.image || "");
+  if (descriptionIdx !== -1 && payload.description !== undefined) sheet.getRange(rowIndex, descriptionIdx + 1).setValue(payload.description || "");
+  
+  clearInitDataCache();
+  return { status: "success", message: "Equipo y stock actualizados con éxito." };
 }
 
 function executeAddStudent(ss, payload) {

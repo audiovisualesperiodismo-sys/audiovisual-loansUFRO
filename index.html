@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=46.0">
+    <link rel="stylesheet" href="styles.css?v=47.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -309,15 +309,23 @@
                     <div class="admin-subnav glass-panel">
                         <button class="admin-subnav-btn active" data-admin-target="admin-tab-loans">
                             <i data-lucide="list"></i>
-                            <span>Gestión e Historial</span>
+                            <span>Préstamos</span>
                         </button>
                         <button class="admin-subnav-btn" data-admin-target="admin-tab-stats">
                             <i data-lucide="bar-chart-3"></i>
                             <span>Estadísticas</span>
                         </button>
-                        <button class="admin-subnav-btn" data-admin-target="admin-tab-config">
+                        <button class="admin-subnav-btn" data-admin-target="admin-tab-equipment">
+                            <i data-lucide="package"></i>
+                            <span>Gestión de Equipos y Stock</span>
+                        </button>
+                        <button class="admin-subnav-btn" data-admin-target="admin-tab-students">
+                            <i data-lucide="users"></i>
+                            <span>Padrón de Alumnos</span>
+                        </button>
+                        <button class="admin-subnav-btn" data-admin-target="admin-tab-settings">
                             <i data-lucide="settings-2"></i>
-                            <span>Configurar Equipos y Alumnos</span>
+                            <span>Ajustes del Sistema</span>
                         </button>
                         <button class="admin-subnav-btn" id="btn-logout-subnav" style="flex-grow:0; color:var(--danger); margin-left:auto; padding: 12px 20px;">
                             <i data-lucide="log-out"></i>
@@ -521,75 +529,92 @@
                         </div>
                     </div>
 
-                    <!-- SUB-TAB 3: CONFIGURACIÓN GENERAL (EQUIPOS, ALUMNOS Y API) -->
-                    <div id="admin-tab-config" class="admin-tab-content">
-                        <div class="config-layout-grid">
+                    <!-- SUB-TAB 3: GESTIÓN DE EQUIPOS Y STOCK (ESPECIALIZADA) -->
+                    <div id="admin-tab-equipment" class="admin-tab-content">
+                        <div class="glass-panel admin-sub-panel">
                             
-                            <!-- Sección: Gestión de Equipos (Añadir / Eliminar) -->
-                            <div class="glass-panel config-card">
-                                <h3 class="panel-title"><i data-lucide="plus-circle"></i> Registrar Nuevo Equipo</h3>
-                                <form id="form-add-equipment" class="config-form">
-                                    <div class="input-group">
-                                        <label for="eq-name">Nombre del Equipo</label>
-                                        <input type="text" id="eq-name" placeholder="Ej. Sony Alpha 7 IV" required>
-                                    </div>
-                                    <div class="input-group-row">
-                                        <div class="input-group">
-                                            <div class="category-header-row">
-                                                <label for="eq-category" style="margin-bottom: 0;">Categoría</label>
-                                                <button type="button" id="btn-toggle-new-cat" class="btn-toggle-cat" title="Agregar una nueva categoría si no existe en la lista">
-                                                    <i data-lucide="plus" style="width: 13px; height: 13px;"></i> + Nueva Categoría
-                                                </button>
-                                            </div>
-                                            <select id="eq-category" required class="select-input">
-                                                <!-- Dinámico desde Google Sheets / Inventario -->
-                                            </select>
-                                            <div id="new-category-wrapper" class="new-category-box" style="display: none;">
-                                                <label for="eq-new-category" style="font-size: 0.74rem; color: var(--primary); font-weight: 700; display: flex; align-items: center; gap: 4px; margin: 0;">
-                                                    <i data-lucide="folder-plus" style="width: 13px; height: 13px;"></i> Nueva Categoría:
-                                                </label>
-                                                <div style="display: flex; gap: 6px;">
-                                                    <input type="text" id="eq-new-category" class="select-input" placeholder="Ej. Drones, Lentes, Notebooks..." style="flex: 1; background: #ffffff; font-size: 0.82rem; height: 36px;">
-                                                    <button type="button" id="btn-cancel-new-cat" class="btn btn-secondary" style="padding: 6px 10px; font-size: 0.75rem; white-space: nowrap; height: 36px;">
-                                                        Cancelar
-                                                    </button>
-                                                </div>
-                                                <small style="color: var(--text-secondary); font-size: 0.7rem; line-height: 1.2;">Se registrará y quedará disponible para este y futuros equipos.</small>
-                                            </div>
-                                        </div>
-                                        <div class="input-group">
-                                            <label for="eq-qty">Cantidad Total</label>
-                                            <input type="number" id="eq-qty" min="1" placeholder="Ej. 5" required>
-                                        </div>
-                                    </div>
-                                    <div class="input-group">
-                                        <label for="eq-codes">Códigos de Inventario (Separados por coma)</label>
-                                        <input type="text" id="eq-codes" placeholder="Ej. SONY-01, SONY-02, SONY-03" required>
-                                    </div>
-                                    <div class="input-group">
-                                        <label for="eq-image">URL de Imagen (Opcional)</label>
-                                        <input type="url" id="eq-image" placeholder="Ej. https://images.unsplash.com/photo-...">
-                                    </div>
-                                    <div class="input-group">
-                                        <label for="eq-description">Descripción Breve (Opcional)</label>
-                                        <textarea id="eq-description" placeholder="Ej. Cámara mirrorless Full Frame..." class="select-input" style="height: 60px; resize: vertical;"></textarea>
-                                    </div>
-                                    <button type="submit" class="btn btn-primary btn-full">
-                                        <i data-lucide="save"></i> Guardar Equipo
+                            <!-- Encabezado con Botones de Acción -->
+                            <div class="panel-header-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; margin-bottom:20px;">
+                                <div>
+                                    <h3 class="panel-title" style="margin:0;"><i data-lucide="package"></i> Inventario y Gestión de Stock</h3>
+                                    <p class="panel-subtitle" style="margin:4px 0 0; font-size:0.82rem; color:var(--text-secondary);">
+                                        Controla existencias, mantenciones, bajas y stock físico en tiempo real sin necesidad de recurrir a Excel.
+                                    </p>
+                                </div>
+                                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                                    <button type="button" class="btn btn-secondary" id="btn-sync-inventory-stock" title="Audita y recalcula el stock disponible restando los préstamos activos reales">
+                                        <i data-lucide="activity"></i> Auditar Stock
                                     </button>
-                                </form>
-
-                                <div class="registered-list-container">
-                                    <h4 class="sub-panel-title">Equipos Registrados</h4>
-                                    <ul class="admin-data-list" id="admin-equipment-list">
-                                        <!-- Dinámico -->
-                                    </ul>
+                                    <button type="button" class="btn btn-primary" id="btn-open-add-equipment-modal">
+                                        <i data-lucide="plus-circle"></i> + Registrar Nuevo Equipo
+                                    </button>
                                 </div>
                             </div>
 
-                            <!-- Sección: Gestión de Alumnos (Añadir / Eliminar) -->
+                            <!-- Tarjetas KPI de Inventario -->
+                            <div class="inventory-kpi-grid">
+                                <div class="kpi-stock-card">
+                                    <span class="kpi-stock-label"><i data-lucide="layers"></i> Modelos Registrados</span>
+                                    <span class="kpi-stock-val" id="kpi-eq-models">0</span>
+                                </div>
+                                <div class="kpi-stock-card">
+                                    <span class="kpi-stock-label"><i data-lucide="boxes"></i> Unidades Totales</span>
+                                    <span class="kpi-stock-val" id="kpi-eq-total-units">0</span>
+                                </div>
+                                <div class="kpi-stock-card kpi-stock-available">
+                                    <span class="kpi-stock-label"><i data-lucide="check-circle-2"></i> Disponibles en Pañol</span>
+                                    <span class="kpi-stock-val" id="kpi-eq-available-units">0</span>
+                                </div>
+                                <div class="kpi-stock-card kpi-stock-loaned">
+                                    <span class="kpi-stock-label"><i data-lucide="clock"></i> En Préstamo Activo</span>
+                                    <span class="kpi-stock-val" id="kpi-eq-loaned-units">0</span>
+                                </div>
+                                <div class="kpi-stock-card kpi-stock-maintenance">
+                                    <span class="kpi-stock-label"><i data-lucide="wrench"></i> En Mantención</span>
+                                    <span class="kpi-stock-val" id="kpi-eq-maintenance-units">0</span>
+                                </div>
+                                <div class="kpi-stock-card kpi-stock-decommissioned">
+                                    <span class="kpi-stock-label"><i data-lucide="archive"></i> Dadas de Baja</span>
+                                    <span class="kpi-stock-val" id="kpi-eq-decommissioned-units">0</span>
+                                </div>
+                            </div>
+
+                            <!-- Barra de Búsqueda y Filtros de Inventario -->
+                            <div class="equipment-filter-bar glass-panel" style="margin: 20px 0; padding: 14px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between; border-radius: 8px;">
+                                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; flex:1; min-width:280px;">
+                                    <div style="position:relative; flex:1; min-width:200px;">
+                                        <input type="text" id="admin-eq-search-input" placeholder="Buscar equipo por nombre, código o categoría..." class="select-input" style="width:100%; padding-left:34px; height:38px; border-radius:6px; font-size:0.85rem; background:#fff;">
+                                        <i data-lucide="search" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); width:16px; height:16px; color:var(--text-secondary); pointer-events:none;"></i>
+                                    </div>
+                                    <select id="admin-eq-category-filter" class="select-input" style="width:auto; min-width:160px; height:38px; border-radius:6px; font-size:0.85rem; background:#fff;">
+                                        <option value="all">Todas las Categorías</option>
+                                    </select>
+                                </div>
+                                <div class="eq-status-filter-pills" style="display:flex; gap:6px; flex-wrap:wrap;">
+                                    <button type="button" class="btn-eq-filter active" data-filter="all">Todos (<span id="count-eq-all">0</span>)</button>
+                                    <button type="button" class="btn-eq-filter" data-filter="available">Disponibles (<span id="count-eq-available">0</span>)</button>
+                                    <button type="button" class="btn-eq-filter" data-filter="in_loan">En Préstamo (<span id="count-eq-loan">0</span>)</button>
+                                    <button type="button" class="btn-eq-filter btn-filter-warning" data-filter="maintenance">En Mantención (<span id="count-eq-maintenance">0</span>)</button>
+                                    <button type="button" class="btn-eq-filter btn-filter-danger" data-filter="out_of_stock">Agotados (<span id="count-eq-out">0</span>)</button>
+                                </div>
+                            </div>
+
+                            <!-- Grilla Especializada de Equipos y Stock -->
+                            <div id="admin-equipment-stock-container" class="admin-equipment-grid">
+                                <!-- Renderizado dinámico -->
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB 4: GESTIÓN Y PADRÓN DE ALUMNOS (DEDICADA) -->
+                    <div id="admin-tab-students" class="admin-tab-content">
+                        <div class="config-layout-grid">
+                            
+                            <!-- Tarjeta: Registrar Nuevo Alumno -->
                             <div class="glass-panel config-card">
                                 <h3 class="panel-title"><i data-lucide="user-plus"></i> Registrar Nuevo Alumno</h3>
+                                <p class="card-desc" style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:14px;">Ingresa un nuevo estudiante al padrón autorizado para solicitar equipos.</p>
                                 <form id="form-add-student" class="config-form">
                                     <div class="input-group-row">
                                         <div class="input-group">
@@ -630,10 +655,13 @@
                                         <i data-lucide="user-check"></i> Registrar Alumno
                                     </button>
                                 </form>
+                            </div>
 
-                                <div class="registered-list-container">
+                            <!-- Tarjeta: Listado y Búsqueda de Alumnos -->
+                            <div class="glass-panel config-card">
+                                <div class="registered-list-container" style="margin-top:0;">
                                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px; border-bottom: 1px solid var(--glass-border); padding-bottom:10px;">
-                                        <h4 class="sub-panel-title" style="margin:0;">Alumnos en la Base de Datos</h4>
+                                        <h4 class="sub-panel-title" style="margin:0;"><i data-lucide="users"></i> Alumnos en la Base de Datos</h4>
                                         <div style="position:relative; width: 100%; max-width: 250px; display:flex; align-items:center;">
                                             <input type="text" id="admin-students-search" placeholder="Buscar por nombre o RUT..." class="select-input" style="width:100%; padding: 8px 12px 8px 32px; border-radius: 6px; font-size: 0.8rem; height: 34px; border: 1px solid var(--glass-border); background: #fff;" autocomplete="off">
                                             <i data-lucide="search" style="position:absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--text-secondary); pointer-events:none;"></i>
@@ -659,9 +687,12 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
 
+                    <!-- SUB-TAB 5: AJUSTES Y CONFIGURACIÓN DEL SISTEMA -->
+                    <div id="admin-tab-settings" class="admin-tab-content">
                         <!-- Panel de Configuración de Firebase Firestore (Tiempo Real) -->
-                        <div class="glass-panel settings-card" style="margin-top: 30px; border-left: 4px solid #10b981;">
+                        <div class="glass-panel settings-card" style="border-left: 4px solid #10b981;">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
                                 <h3 class="panel-title" style="margin:0;"><i data-lucide="flame" style="color:#f59e0b;"></i> Base de Datos Firebase Firestore (Tiempo Real)</h3>
                                 <span class="firebase-config-badge offline" id="firebase-status-badge">
@@ -948,10 +979,243 @@
         </div>
     </div>
 
+    <!-- Modal: Registrar Nuevo Equipo -->
+    <div class="modal-overlay hidden" id="modal-add-equipment">
+        <div class="modal-card glass-panel" style="max-width: 580px;">
+            <div class="modal-header">
+                <h3><i data-lucide="plus-circle" style="color:var(--primary); display:inline; vertical-align:middle;"></i> Registrar Nuevo Equipo</h3>
+                <button class="btn-close-modal" id="btn-close-modal-add-equipment"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="form-add-equipment-modal" class="config-form">
+                    <div class="input-group">
+                        <label for="modal-eq-name">Nombre del Equipo</label>
+                        <input type="text" id="modal-eq-name" placeholder="Ej. Sony Alpha 7 IV" required>
+                    </div>
+                    <div class="input-group-row">
+                        <div class="input-group">
+                            <div class="category-header-row">
+                                <label for="modal-eq-category" style="margin-bottom: 0;">Categoría</label>
+                                <button type="button" id="btn-modal-toggle-new-cat" class="btn-toggle-cat" title="Agregar nueva categoría">
+                                    <i data-lucide="plus" style="width: 12px; height: 12px;"></i> + Nueva
+                                </button>
+                            </div>
+                            <select id="modal-eq-category" required class="select-input">
+                                <!-- Dinámico -->
+                            </select>
+                            <div id="modal-new-category-wrapper" class="new-category-box" style="display: none;">
+                                <div style="display: flex; gap: 6px;">
+                                    <input type="text" id="modal-eq-new-category" class="select-input" placeholder="Nombre nueva categoría..." style="flex: 1; height: 34px;">
+                                    <button type="button" id="btn-modal-cancel-new-cat" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.75rem; height: 34px;">Cancelar</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="modal-eq-qty">Cantidad Total de Unidades</label>
+                            <input type="number" id="modal-eq-qty" min="1" placeholder="Ej. 3" required>
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label for="modal-eq-codes">Códigos Físicos de Inventario (Separados por coma)</label>
+                        <input type="text" id="modal-eq-codes" placeholder="Ej. SONY-01, SONY-02, SONY-03" required>
+                        <small style="color:var(--text-secondary); font-size:0.72rem;">Ingresa un código único para cada unidad física.</small>
+                    </div>
+                    <div class="input-group">
+                        <label for="modal-eq-image">URL de Imagen (Opcional)</label>
+                        <input type="url" id="modal-eq-image" placeholder="Ej. https://images.unsplash.com/...">
+                    </div>
+                    <div class="input-group">
+                        <label for="modal-eq-description">Descripción o Accesorios incluidos (Opcional)</label>
+                        <textarea id="modal-eq-description" placeholder="Ej. Incluye estuche, batería y cargador..." class="select-input" style="height: 60px; resize: vertical;"></textarea>
+                    </div>
+                    <div class="modal-actions-group" style="display:flex; gap:10px; margin-top:20px;">
+                        <button type="button" class="btn btn-secondary" id="btn-cancel-add-equipment" style="flex:1;">Cancelar</button>
+                        <button type="submit" class="btn btn-primary" style="flex:2; display:flex; align-items:center; justify-content:center; gap:6px;">
+                            <i data-lucide="save"></i> Guardar Equipo en Inventario
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Gestión de Mantención -->
+    <div class="modal-overlay hidden" id="modal-maintenance">
+        <div class="modal-card glass-panel" style="max-width: 560px;">
+            <div class="modal-header">
+                <h3><i data-lucide="wrench" style="color:#f59e0b; display:inline; vertical-align:middle;"></i> Control de Mantención</h3>
+                <button class="btn-close-modal" id="btn-close-modal-maintenance"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="maint-equipment-id">
+                <input type="hidden" id="maint-equipment-name">
+                
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px; margin-bottom:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h4 id="maint-modal-item-name" style="margin:0; font-size:1rem; font-weight:800; color:var(--text-primary);">Equipo</h4>
+                        <span id="maint-modal-category-badge" class="badge" style="background:rgba(79,70,229,0.1); color:var(--primary); font-size:0.75rem;">Categoría</span>
+                    </div>
+                    <div style="display:flex; gap:14px; margin-top:8px; font-size:0.8rem; color:var(--text-secondary);">
+                        <span>Total: <strong id="maint-modal-total-count" style="color:var(--text-primary);">0</strong></span>
+                        <span>Disponibles: <strong id="maint-modal-available-count" style="color:#10b981;">0</strong></span>
+                        <span>En Mantención: <strong id="maint-modal-current-maint-count" style="color:#f59e0b;">0</strong></span>
+                    </div>
+                </div>
+
+                <!-- Pestañas de Mantención: Ingresar vs Reintegrar -->
+                <div class="maint-tab-nav" style="display:flex; gap:6px; border-bottom:1px solid #e2e8f0; padding-bottom:10px; margin-bottom:16px;">
+                    <button type="button" class="btn btn-secondary active" id="btn-tab-send-maint" style="flex:1; font-size:0.82rem; padding:8px 12px; font-weight:700;">
+                        <i data-lucide="arrow-up-right" style="width:14px; height:14px;"></i> Enviar a Mantención
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="btn-tab-view-maint" style="flex:1; font-size:0.82rem; padding:8px 12px; font-weight:700;">
+                        <i data-lucide="check-circle-2" style="width:14px; height:14px;"></i> En Taller / Reintegrar (<span id="maint-count-badge">0</span>)
+                    </button>
+                </div>
+
+                <!-- Vista 1: Formulario Enviar a Mantención -->
+                <div id="maint-view-send">
+                    <form id="form-send-maintenance">
+                        <div class="input-group">
+                            <label for="maint-send-code">Código Físico de la Unidad (Opcional si hay varios)</label>
+                            <select id="maint-send-code" class="select-input">
+                                <option value="">Seleccionar código o descontar 1 unidad disponible</option>
+                            </select>
+                        </div>
+                        <div class="input-group" style="margin-top:12px;">
+                            <label for="maint-send-reason">Motivo o Diagnóstico del Fallo</label>
+                            <textarea id="maint-send-reason" required placeholder="Ej. Lente atascado, cable con falso contacto, enviado a servicio técnico..." class="select-input" style="height:70px; resize:vertical;"></textarea>
+                        </div>
+                        <div class="modal-actions-group" style="display:flex; gap:10px; margin-top:18px;">
+                            <button type="button" class="btn btn-secondary" id="btn-cancel-maint-send" style="flex:1;">Cancelar</button>
+                            <button type="submit" class="btn btn-warning" id="btn-confirm-send-maint" style="flex:2; background:#f59e0b; color:#fff; display:flex; align-items:center; justify-content:center; gap:6px;">
+                                <i data-lucide="wrench"></i> Confirmar Ingreso a Taller
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Vista 2: Lista de Unidades en Taller y Reintegración -->
+                <div id="maint-view-list" class="hidden">
+                    <div id="maint-active-records-list" style="max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">
+                        <!-- Se llena dinámicamente -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Dar de Baja Unidad -->
+    <div class="modal-overlay hidden" id="modal-decommission">
+        <div class="modal-card glass-panel" style="max-width: 520px;">
+            <div class="modal-header">
+                <h3 style="color:#ef4444;"><i data-lucide="archive" style="display:inline; vertical-align:middle;"></i> Dar de Baja Unidad de Equipo</h3>
+                <button class="btn-close-modal" id="btn-close-modal-decommission"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="decom-equipment-id">
+                <input type="hidden" id="decom-equipment-name">
+
+                <div style="background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:12px; margin-bottom:16px;">
+                    <h4 id="decom-modal-item-name" style="margin:0; font-size:1rem; font-weight:800; color:#b91c1c;">Equipo</h4>
+                    <p style="margin:4px 0 0; font-size:0.78rem; color:#b91c1c; line-height:1.4;">
+                        ⚠️ Dar de baja retirará esta unidad del stock activo permanentemente. La unidad se descontará del total y quedará archivada con su justificación.
+                    </p>
+                </div>
+
+                <form id="form-decommission-unit">
+                    <div class="input-group">
+                        <label for="decom-code">Código Físico a dar de baja</label>
+                        <select id="decom-code" class="select-input" required>
+                            <!-- Códigos del equipo -->
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin-top:12px;">
+                        <label for="decom-from-state">¿De dónde procede la baja?</label>
+                        <select id="decom-from-state" class="select-input">
+                            <option value="available">Estaba disponible en pañol</option>
+                            <option value="maintenance">Estaba en mantención / taller (daño irreparable)</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin-top:12px;">
+                        <label for="decom-reason">Motivo Detallado de la Baja</label>
+                        <textarea id="decom-reason" required placeholder="Ej. Caída en salida a terreno con fractura interna de sensor; extraviado; obsolescencia inservible..." class="select-input" style="height:70px; resize:vertical;"></textarea>
+                    </div>
+                    <div class="modal-actions-group" style="display:flex; gap:10px; margin-top:20px;">
+                        <button type="button" class="btn btn-secondary" id="btn-cancel-decom" style="flex:1;">Cancelar</button>
+                        <button type="submit" class="btn btn-danger" style="flex:2; display:flex; align-items:center; justify-content:center; gap:6px;">
+                            <i data-lucide="trash-2"></i> Confirmar Baja Definitiva
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Editar Equipo y Ajustar Stock -->
+    <div class="modal-overlay hidden" id="modal-edit-equipment">
+        <div class="modal-card glass-panel" style="max-width: 580px;">
+            <div class="modal-header">
+                <h3><i data-lucide="edit-3" style="color:var(--primary); display:inline; vertical-align:middle;"></i> Editar Equipo y Ajustar Stock</h3>
+                <button class="btn-close-modal" id="btn-close-modal-edit-equipment"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="form-edit-equipment" class="config-form">
+                    <input type="hidden" id="edit-eq-id">
+                    <input type="hidden" id="edit-eq-original-name">
+
+                    <div class="input-group">
+                        <label for="edit-eq-name">Nombre del Equipo</label>
+                        <input type="text" id="edit-eq-name" required>
+                    </div>
+
+                    <div class="input-group-row">
+                        <div class="input-group">
+                            <label for="edit-eq-category">Categoría</label>
+                            <select id="edit-eq-category" required class="select-input">
+                                <!-- Dinámico -->
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label for="edit-eq-total">Stock Total de Unidades</label>
+                            <input type="number" id="edit-eq-total" min="0" required>
+                        </div>
+                        <div class="input-group">
+                            <label for="edit-eq-available">Stock Disponible en Pañol</label>
+                            <input type="number" id="edit-eq-available" min="0" required>
+                        </div>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="edit-eq-codes">Códigos de Inventario (Separados por coma)</label>
+                        <input type="text" id="edit-eq-codes" required>
+                        <small style="color:var(--text-secondary); font-size:0.72rem;">Códigos físicos asignados a este modelo.</small>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="edit-eq-image">URL de Imagen</label>
+                        <input type="url" id="edit-eq-image" placeholder="https://...">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="edit-eq-description">Descripción o Accesorios</label>
+                        <textarea id="edit-eq-description" class="select-input" style="height: 60px; resize: vertical;"></textarea>
+                    </div>
+
+                    <div class="modal-actions-group" style="display:flex; gap:10px; margin-top:20px;">
+                        <button type="button" class="btn btn-secondary" id="btn-cancel-edit-eq" style="flex:1;">Cancelar</button>
+                        <button type="submit" class="btn btn-primary" style="flex:2; display:flex; align-items:center; justify-content:center; gap:6px;">
+                            <i data-lucide="check"></i> Guardar Cambios en Stock
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Notificaciones flotantes toast -->
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=46.0"></script>
+    <script src="app.js?v=47.0"></script>
 </body>
 </html>

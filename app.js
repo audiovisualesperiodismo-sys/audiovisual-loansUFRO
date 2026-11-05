@@ -59,7 +59,13 @@ let appState = {
     tempDeliveryItems: [],
     adminStudentsSearchQuery: "",
     adminStudentsFilter: "all",
-    expandedLoanIds: new Set()
+    expandedLoanIds: new Set(),
+    adminEqSearch: "",
+    adminEqCategory: "all",
+    adminEqStatus: "all",
+    currentMaintItem: null,
+    currentDecomItem: null,
+    currentEditItem: null
 };
 
 // Referencias DOM
@@ -125,6 +131,52 @@ const dom = {
     adminEquipmentList: document.getElementById('admin-equipment-list'),
     adminStudentsList: document.getElementById('admin-students-list'),
     adminStudentsSearch: document.getElementById('admin-students-search'),
+    
+    // Gestión Especializada de Equipos y Stock (Fase 37)
+    adminTabEquipment: document.getElementById('admin-tab-equipment'),
+    adminTabStudents: document.getElementById('admin-tab-students'),
+    adminTabSettings: document.getElementById('admin-tab-settings'),
+    adminEquipmentStockContainer: document.getElementById('admin-equipment-stock-container'),
+    btnOpenAddEquipmentModal: document.getElementById('btn-open-add-equipment-modal'),
+    adminEqSearchInput: document.getElementById('admin-eq-search-input'),
+    adminEqCategoryFilter: document.getElementById('admin-eq-category-filter'),
+    btnEqFilters: document.querySelectorAll('.btn-eq-filter'),
+    kpiEqModels: document.getElementById('kpi-eq-models'),
+    kpiEqTotalUnits: document.getElementById('kpi-eq-total-units'),
+    kpiEqAvailableUnits: document.getElementById('kpi-eq-available-units'),
+    kpiEqLoanedUnits: document.getElementById('kpi-eq-loaned-units'),
+    kpiEqMaintenanceUnits: document.getElementById('kpi-eq-maintenance-units'),
+    kpiEqDecommissionedUnits: document.getElementById('kpi-eq-decommissioned-units'),
+    countEqAll: document.getElementById('count-eq-all'),
+    countEqAvailable: document.getElementById('count-eq-available'),
+    countEqLoan: document.getElementById('count-eq-loan'),
+    countEqMaintenance: document.getElementById('count-eq-maintenance'),
+    countEqOut: document.getElementById('count-eq-out'),
+    modalAddEquipment: document.getElementById('modal-add-equipment'),
+    btnCloseModalAddEquipment: document.getElementById('btn-close-modal-add-equipment'),
+    btnCancelAddEquipment: document.getElementById('btn-cancel-add-equipment'),
+    formAddEquipmentModal: document.getElementById('form-add-equipment-modal'),
+    modalEqCategory: document.getElementById('modal-eq-category'),
+    modalNewCategoryWrapper: document.getElementById('modal-new-category-wrapper'),
+    modalEqNewCategory: document.getElementById('modal-eq-new-category'),
+    btnModalToggleNewCat: document.getElementById('btn-modal-toggle-new-cat'),
+    btnModalCancelNewCat: document.getElementById('btn-modal-cancel-new-cat'),
+    modalMaintenance: document.getElementById('modal-maintenance'),
+    btnCloseModalMaintenance: document.getElementById('btn-close-modal-maintenance'),
+    btnCancelMaintSend: document.getElementById('btn-cancel-maint-send'),
+    formSendMaintenance: document.getElementById('form-send-maintenance'),
+    btnTabSendMaint: document.getElementById('btn-tab-send-maint'),
+    btnTabViewMaint: document.getElementById('btn-tab-view-maint'),
+    maintViewSend: document.getElementById('maint-view-send'),
+    maintViewList: document.getElementById('maint-view-list'),
+    modalDecommission: document.getElementById('modal-decommission'),
+    btnCloseModalDecommission: document.getElementById('btn-close-modal-decommission'),
+    btnCancelDecom: document.getElementById('btn-cancel-decom'),
+    formDecommissionUnit: document.getElementById('form-decommission-unit'),
+    modalEditEquipment: document.getElementById('modal-edit-equipment'),
+    btnCloseModalEditEquipment: document.getElementById('btn-close-modal-edit-equipment'),
+    btnCancelEditEq: document.getElementById('btn-cancel-edit-eq'),
+    formEditEquipment: document.getElementById('form-edit-equipment'),
     btnSaveSettings: document.getElementById('btn-save-settings'),
     scriptUrlInput: document.getElementById('script-url-input'),
     sheetUrlInput: document.getElementById('sheet-url-input'),
@@ -274,6 +326,26 @@ function getDirectImageUrl(url) {
     return url;
 }
 
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return str.toString()
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function normalizeEquipName(str) {
+    if (!str) return '';
+    return str.toString()
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, ' ');
+}
+
 function cleanCategoryName(cat) {
     if (!cat) return "Otros";
     const clean = cat.toString().trim().replace(/\s+/g, ' ').normalize("NFC");
@@ -298,6 +370,14 @@ function groupInventoryItems(rawInventory) {
         if (existing) {
             existing.total += parseInt(item.total) || 0;
             existing.available += parseInt(item.available) || 0;
+            existing.maintenance = (existing.maintenance || 0) + (parseInt(item.maintenance) || 0);
+            existing.decommissioned = (existing.decommissioned || 0) + (parseInt(item.decommissioned) || 0);
+            if (item.maintenanceNotes && Array.isArray(item.maintenanceNotes)) {
+                existing.maintenanceNotes = [...(existing.maintenanceNotes || []), ...item.maintenanceNotes];
+            }
+            if (item.decommissionedNotes && Array.isArray(item.decommissionedNotes)) {
+                existing.decommissionedNotes = [...(existing.decommissionedNotes || []), ...item.decommissionedNotes];
+            }
             if (item.codes && Array.isArray(item.codes)) {
                 item.codes.forEach(c => {
                     const cleanCode = c.trim();
@@ -322,6 +402,10 @@ function groupInventoryItems(rawInventory) {
                 name: normalizedName,
                 total: parseInt(item.total) || 0,
                 available: parseInt(item.available) || 0,
+                maintenance: parseInt(item.maintenance) || 0,
+                decommissioned: parseInt(item.decommissioned) || 0,
+                maintenanceNotes: Array.isArray(item.maintenanceNotes) ? [...item.maintenanceNotes] : [],
+                decommissionedNotes: Array.isArray(item.decommissionedNotes) ? [...item.decommissionedNotes] : [],
                 codes: item.codes ? [...item.codes].map(c => c.trim()) : [],
                 image: item.image ? getDirectImageUrl(item.image) : "",
                 description: item.description || ""
@@ -1844,6 +1928,12 @@ function initEventListeners() {
                 if (!CONFIG.demoMode) {
                     loadData(true);
                 }
+            } else if (target === 'admin-tab-equipment') {
+                renderAdminEquipmentStockModule();
+            } else if (target === 'admin-tab-students') {
+                renderAdminStudentsList();
+            } else if (target === 'admin-tab-settings') {
+                updateFirebaseBadge();
             } else if (target === 'admin-tab-config') {
                 renderAdminConfigLists();
             }
@@ -1910,18 +2000,139 @@ function initEventListeners() {
         });
     }
     
-    dom.formAddEquipment.addEventListener('submit', (e) => {
-        e.preventDefault();
-        saveEquipmentConfig();
-    });
-    
-    dom.formAddEquipment.addEventListener('reset', () => {
-        setTimeout(() => {
-            if (dom.newCategoryWrapper) dom.newCategoryWrapper.style.display = 'none';
-            if (dom.eqNewCategory) dom.eqNewCategory.value = '';
-            renderCategoryDropdown();
-        }, 50);
-    });
+    if (dom.formAddEquipment) {
+        dom.formAddEquipment.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveEquipmentConfig();
+        });
+        
+        dom.formAddEquipment.addEventListener('reset', () => {
+            setTimeout(() => {
+                if (dom.newCategoryWrapper) dom.newCategoryWrapper.style.display = 'none';
+                if (dom.eqNewCategory) dom.eqNewCategory.value = '';
+                renderCategoryDropdown();
+            }, 50);
+        });
+    }
+
+    // Buscador y Filtros de la Pestaña Especializada de Equipos (Fase 37)
+    if (dom.adminEqSearchInput) {
+        dom.adminEqSearchInput.addEventListener('input', (e) => {
+            appState.adminEqSearch = e.target.value;
+            renderAdminEquipmentStockModule();
+        });
+    }
+
+    if (dom.adminEqCategoryFilter) {
+        dom.adminEqCategoryFilter.addEventListener('change', (e) => {
+            appState.adminEqCategory = e.target.value;
+            renderAdminEquipmentStockModule();
+        });
+    }
+
+    if (dom.btnEqFilters) {
+        dom.btnEqFilters.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                dom.btnEqFilters.forEach(b => b.classList.remove('active'));
+                e.currentTarget.classList.add('active');
+                appState.adminEqStatus = e.currentTarget.getAttribute('data-filter') || 'all';
+                renderAdminEquipmentStockModule();
+            });
+        });
+    }
+
+    // Modal Registrar Nuevo Equipo
+    if (dom.btnOpenAddEquipmentModal) {
+        dom.btnOpenAddEquipmentModal.addEventListener('click', () => {
+            openAddEquipmentModal();
+        });
+    }
+    if (dom.btnCloseModalAddEquipment) {
+        dom.btnCloseModalAddEquipment.addEventListener('click', () => {
+            if (dom.modalAddEquipment) dom.modalAddEquipment.classList.add('hidden');
+        });
+    }
+    if (dom.btnCancelAddEquipment) {
+        dom.btnCancelAddEquipment.addEventListener('click', () => {
+            if (dom.modalAddEquipment) dom.modalAddEquipment.classList.add('hidden');
+        });
+    }
+    if (dom.formAddEquipmentModal) {
+        dom.formAddEquipmentModal.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveEquipmentFromModal();
+        });
+    }
+    if (dom.btnModalToggleNewCat) {
+        dom.btnModalToggleNewCat.addEventListener('click', () => {
+            if (dom.modalNewCategoryWrapper) {
+                dom.modalNewCategoryWrapper.style.display = 'block';
+                if (dom.modalEqNewCategory) {
+                    dom.modalEqNewCategory.value = '';
+                    dom.modalEqNewCategory.focus();
+                }
+            }
+        });
+    }
+    if (dom.btnModalCancelNewCat) {
+        dom.btnModalCancelNewCat.addEventListener('click', () => {
+            if (dom.modalNewCategoryWrapper) {
+                dom.modalNewCategoryWrapper.style.display = 'none';
+                if (dom.modalEqNewCategory) dom.modalEqNewCategory.value = '';
+            }
+        });
+    }
+
+    // Modal Mantención
+    if (dom.btnCloseModalMaintenance) {
+        dom.btnCloseModalMaintenance.addEventListener('click', () => {
+            if (dom.modalMaintenance) dom.modalMaintenance.classList.add('hidden');
+        });
+    }
+    if (dom.btnCancelMaintSend) {
+        dom.btnCancelMaintSend.addEventListener('click', () => {
+            if (dom.modalMaintenance) dom.modalMaintenance.classList.add('hidden');
+        });
+    }
+    if (dom.btnTabSendMaint) {
+        dom.btnTabSendMaint.addEventListener('click', () => showMaintView('send'));
+    }
+    if (dom.btnTabViewMaint) {
+        dom.btnTabViewMaint.addEventListener('click', () => showMaintView('list'));
+    }
+    if (dom.formSendMaintenance) {
+        dom.formSendMaintenance.addEventListener('submit', confirmSendToMaintenance);
+    }
+
+    // Modal Dar de Baja
+    if (dom.btnCloseModalDecommission) {
+        dom.btnCloseModalDecommission.addEventListener('click', () => {
+            if (dom.modalDecommission) dom.modalDecommission.classList.add('hidden');
+        });
+    }
+    if (dom.btnCancelDecom) {
+        dom.btnCancelDecom.addEventListener('click', () => {
+            if (dom.modalDecommission) dom.modalDecommission.classList.add('hidden');
+        });
+    }
+    if (dom.formDecommissionUnit) {
+        dom.formDecommissionUnit.addEventListener('submit', confirmDecommissionUnit);
+    }
+
+    // Modal Editar Equipo y Ajustar Stock
+    if (dom.btnCloseModalEditEquipment) {
+        dom.btnCloseModalEditEquipment.addEventListener('click', () => {
+            if (dom.modalEditEquipment) dom.modalEditEquipment.classList.add('hidden');
+        });
+    }
+    if (dom.btnCancelEditEq) {
+        dom.btnCancelEditEq.addEventListener('click', () => {
+            if (dom.modalEditEquipment) dom.modalEditEquipment.classList.add('hidden');
+        });
+    }
+    if (dom.formEditEquipment) {
+        dom.formEditEquipment.addEventListener('submit', confirmSaveEditEquipment);
+    }
     
     if (dom.eqCategory) {
         dom.eqCategory.addEventListener('change', () => {
@@ -4999,38 +5210,634 @@ function renderCategoryDropdown(selectedCat = null) {
 }
 
 function renderAdminConfigLists() {
-    renderAdminEquipmentList();
+    renderAdminEquipmentStockModule();
     renderAdminStudentsList();
     renderCategoryDropdown();
 }
 
 function renderAdminEquipmentList() {
-    dom.adminEquipmentList.innerHTML = '';
-    if (appState.inventory.length === 0) {
-        dom.adminEquipmentList.innerHTML = '<li class="table-empty"><p>No hay equipos registrados.</p></li>';
+    if (dom.adminEquipmentList) {
+        dom.adminEquipmentList.innerHTML = '';
+        if (appState.inventory.length === 0) {
+            dom.adminEquipmentList.innerHTML = '<li class="table-empty"><p>No hay equipos registrados.</p></li>';
+        } else {
+            appState.inventory.forEach(item => {
+                const li = document.createElement('li');
+                li.className = 'admin-list-item';
+                li.innerHTML = `
+                    <div class="admin-item-info">
+                        <h5>${item.name}</h5>
+                        <p>Categoría: ${item.category} | Stock Total: ${item.total} (Disp: ${item.available})</p>
+                    </div>
+                    <button class="btn-delete-item" data-id="${item.id}" data-name="${item.name}">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                `;
+                li.querySelector('.btn-delete-item').addEventListener('click', (e) => {
+                    const id = parseInt(e.currentTarget.getAttribute('data-id'));
+                    const name = e.currentTarget.getAttribute('data-name');
+                    deleteEquipmentConfig(id, name);
+                });
+                dom.adminEquipmentList.appendChild(li);
+            });
+        }
+    }
+    renderAdminEquipmentStockModule();
+}
+
+function getActiveLoansCountByItemName(name) {
+    if (!name || !appState.loans) return 0;
+    const clean = normalizeEquipName(name);
+    return appState.loans.filter(l => 
+        (l.status === 'Solicitado' || l.status === 'Retirado') && 
+        normalizeEquipName(l.item || '') === clean
+    ).length;
+}
+
+function renderAdminEquipmentStockModule() {
+    if (!dom.adminEquipmentStockContainer) return;
+    
+    // 1. Calcular KPIs globales de inventario
+    const totalModels = appState.inventory.length;
+    let totalUnits = 0;
+    let availableUnits = 0;
+    let maintenanceUnits = 0;
+    let decommissionedUnits = 0;
+    
+    appState.inventory.forEach(i => {
+        totalUnits += (parseInt(i.total) || 0);
+        availableUnits += (parseInt(i.available) || 0);
+        maintenanceUnits += (parseInt(i.maintenance) || 0);
+        decommissionedUnits += (parseInt(i.decommissioned) || 0);
+    });
+    
+    const activeLoanItems = appState.loans.filter(l => l.status === "Retirado" || l.status === "Solicitado");
+    const loanedUnits = activeLoanItems.length;
+
+    if (dom.kpiEqModels) dom.kpiEqModels.textContent = totalModels;
+    if (dom.kpiEqTotalUnits) dom.kpiEqTotalUnits.textContent = totalUnits;
+    if (dom.kpiEqAvailableUnits) dom.kpiEqAvailableUnits.textContent = availableUnits;
+    if (dom.kpiEqLoanedUnits) dom.kpiEqLoanedUnits.textContent = loanedUnits;
+    if (dom.kpiEqMaintenanceUnits) dom.kpiEqMaintenanceUnits.textContent = maintenanceUnits;
+    if (dom.kpiEqDecommissionedUnits) dom.kpiEqDecommissionedUnits.textContent = decommissionedUnits;
+
+    // 2. Poblar dropdown de categorías del módulo de inventario
+    if (dom.adminEqCategoryFilter) {
+        const currentSelected = appState.adminEqCategory || 'all';
+        const uniqueCategories = [...new Set(appState.inventory.map(i => cleanCategoryName(i.category)))].filter(Boolean).sort();
+        dom.adminEqCategoryFilter.innerHTML = '<option value="all">Todas las Categorías</option>' + 
+            uniqueCategories.map(cat => `<option value="${escapeHtml(cat)}" ${cat === currentSelected ? 'selected' : ''}>${escapeHtml(cat)}</option>`).join('');
+    }
+
+    // 3. Conteo de filtros de estado
+    let countAll = appState.inventory.length;
+    let countAvailable = 0;
+    let countInLoan = 0;
+    let countMaint = 0;
+    let countOut = 0;
+
+    appState.inventory.forEach(item => {
+        const itemActiveLoans = getActiveLoansCountByItemName(item.name);
+        const itemMaint = parseInt(item.maintenance) || 0;
+        const itemAvail = parseInt(item.available) || 0;
+        
+        if (itemAvail > 0) countAvailable++;
+        if (itemActiveLoans > 0) countInLoan++;
+        if (itemMaint > 0) countMaint++;
+        if (itemAvail <= 0) countOut++;
+    });
+
+    if (dom.countEqAll) dom.countEqAll.textContent = countAll;
+    if (dom.countEqAvailable) dom.countEqAvailable.textContent = countAvailable;
+    if (dom.countEqLoan) dom.countEqLoan.textContent = countInLoan;
+    if (dom.countEqMaintenance) dom.countEqMaintenance.textContent = countMaint;
+    if (dom.countEqOut) dom.countEqOut.textContent = countOut;
+
+    // 4. Filtrar inventario
+    const query = (appState.adminEqSearch || '').trim().toLowerCase();
+    const catFilter = appState.adminEqCategory || 'all';
+    const statusFilter = appState.adminEqStatus || 'all';
+
+    const filtered = appState.inventory.filter(item => {
+        const cleanName = (item.name || '').toLowerCase();
+        const cleanCat = (item.category || '').toLowerCase();
+        const codesStr = (item.codes || []).join(' ').toLowerCase();
+
+        // Búsqueda de texto
+        if (query) {
+            const matchesQuery = cleanName.includes(query) || cleanCat.includes(query) || codesStr.includes(query);
+            if (!matchesQuery) return false;
+        }
+
+        // Filtro de categoría
+        if (catFilter !== 'all') {
+            if (cleanCategoryName(item.category) !== catFilter) return false;
+        }
+
+        // Filtro de estado
+        const itemActiveLoans = getActiveLoansCountByItemName(item.name);
+        const itemMaint = parseInt(item.maintenance) || 0;
+        const itemAvail = parseInt(item.available) || 0;
+
+        if (statusFilter === 'available' && itemAvail <= 0) return false;
+        if (statusFilter === 'in_loan' && itemActiveLoans <= 0) return false;
+        if (statusFilter === 'maintenance' && itemMaint <= 0) return false;
+        if (statusFilter === 'out_of_stock' && itemAvail > 0) return false;
+
+        return true;
+    });
+
+    // 5. Renderizar tarjetas
+    dom.adminEquipmentStockContainer.innerHTML = '';
+    if (filtered.length === 0) {
+        dom.adminEquipmentStockContainer.innerHTML = `
+            <div style="grid-column: 1 / -1; padding: 40px 20px; text-align: center; color: var(--text-secondary); background: #f8fafc; border-radius: 8px; border: 1px dashed #cbd5e1;">
+                <i data-lucide="package-search" style="width: 44px; height: 44px; margin-bottom: 12px; color: #94a3b8;"></i>
+                <h4 style="margin: 0 0 6px 0; font-size: 1rem; color: var(--text-primary); font-weight: 700;">No se encontraron equipos</h4>
+                <p style="margin: 0; font-size: 0.85rem;">Prueba ajustando los términos de búsqueda o los filtros de categoría y estado.</p>
+            </div>
+        `;
+        lucide.createIcons();
+        return;
+    }
+
+    filtered.forEach(item => {
+        const itemTotal = parseInt(item.total) || 0;
+        const itemAvail = parseInt(item.available) || 0;
+        const itemMaint = parseInt(item.maintenance) || 0;
+        const itemDecom = parseInt(item.decommissioned) || 0;
+        const itemActiveLoans = getActiveLoansCountByItemName(item.name);
+
+        const availPct = itemTotal > 0 ? Math.min(100, Math.round((itemAvail / itemTotal) * 100)) : 0;
+        const loanPct = itemTotal > 0 ? Math.min(100, Math.round((itemActiveLoans / itemTotal) * 100)) : 0;
+        const maintPct = itemTotal > 0 ? Math.min(100, Math.round((itemMaint / itemTotal) * 100)) : 0;
+
+        const card = document.createElement('div');
+        card.className = 'equipment-stock-card';
+        card.innerHTML = `
+            <div class="equipment-stock-header">
+                ${item.image ? `<img src="${item.image}" alt="${escapeHtml(item.name)}" class="equipment-stock-thumb" onerror="this.onerror=null; this.src='BOYA%20K2%20MANO%202.jpeg';">` : `<div class="equipment-stock-thumb"><i data-lucide="camera" style="width:24px; height:24px;"></i></div>`}
+                <div class="equipment-stock-meta">
+                    <span class="equipment-category-pill">${escapeHtml(item.category || 'Otros')}</span>
+                    <h4 class="equipment-stock-title" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</h4>
+                    <div class="stock-badges-row">
+                        <span class="stock-pill stock-pill-total" title="Stock Total">Total: ${itemTotal}</span>
+                        <span class="stock-pill stock-pill-available ${itemAvail <= 0 ? 'zero' : ''}" title="Unidades disponibles en pañol">
+                            ${itemAvail <= 0 ? 'Agotado (0)' : `Disp: ${itemAvail}`}
+                        </span>
+                        ${itemActiveLoans > 0 ? `<span class="stock-pill stock-pill-loaned" title="Unidades actualmente prestadas">Prestados: ${itemActiveLoans}</span>` : ''}
+                        ${itemMaint > 0 ? `<span class="stock-pill stock-pill-maintenance" title="Unidades en taller o mantención">En Taller: ${itemMaint}</span>` : ''}
+                        ${itemDecom > 0 ? `<span class="stock-pill stock-pill-decommissioned" title="Unidades dadas de baja">Bajas: ${itemDecom}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+
+            <div class="stock-progress-container" title="Disponibles: ${itemAvail} | Prestados: ${itemActiveLoans} | Mantención: ${itemMaint}">
+                <div class="stock-prog-available" style="width: ${availPct}%;"></div>
+                <div class="stock-prog-loaned" style="width: ${loanPct}%;"></div>
+                <div class="stock-prog-maint" style="width: ${maintPct}%;"></div>
+            </div>
+
+            <div>
+                <span style="font-size:0.7rem; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:4px;">
+                    Códigos Asignados (${(item.codes || []).length}):
+                </span>
+                <div class="stock-codes-box">
+                    ${(item.codes && item.codes.length > 0) ? item.codes.map(c => {
+                        const cleanCode = c.trim().toUpperCase();
+                        const isMaintCode = (item.maintenanceNotes || []).some(m => (m.code || '').trim().toUpperCase() === cleanCode);
+                        const isLoanedCode = appState.loans.some(l => (l.status === 'Retirado') && (l.code || '').trim().toUpperCase() === cleanCode);
+                        let cls = '';
+                        let tip = 'Disponible';
+                        if (isMaintCode) { cls = 'is-maint'; tip = 'En Mantención'; }
+                        else if (isLoanedCode) { cls = 'is-loaned'; tip = 'En Préstamo'; }
+                        return `<span class="equipment-code-chip ${cls}" title="${tip}">${escapeHtml(cleanCode)}</span>`;
+                    }).join('') : '<span style="font-size:0.75rem; color:var(--text-secondary); font-style:italic;">Sin códigos individuales</span>'}
+                </div>
+            </div>
+
+            <div class="equipment-card-actions">
+                <button type="button" class="btn-card-action btn-action-maint" data-action="maintenance" data-id="${item.id}" title="Enviar a taller o reintegrar unidades reparadas">
+                    <i data-lucide="wrench"></i> Mantención
+                </button>
+                <button type="button" class="btn-card-action btn-action-decom" data-action="decommission" data-id="${item.id}" title="Dar de baja unidades rotas o extraviadas">
+                    <i data-lucide="archive"></i> De Baja
+                </button>
+                <button type="button" class="btn-card-action btn-action-edit" data-action="edit" data-id="${item.id}" title="Editar datos y ajustar stock">
+                    <i data-lucide="edit-3"></i> Editar
+                </button>
+                <button type="button" class="btn-card-action btn-action-del" data-action="delete" data-id="${item.id}" data-name="${escapeHtml(item.name)}" title="Eliminar equipo del catálogo">
+                    <i data-lucide="trash-2"></i>
+                </button>
+            </div>
+        `;
+
+        card.querySelector('[data-action="maintenance"]').addEventListener('click', () => openMaintenanceModal(item));
+        card.querySelector('[data-action="decommission"]').addEventListener('click', () => openDecommissionModal(item));
+        card.querySelector('[data-action="edit"]').addEventListener('click', () => openEditEquipmentModal(item));
+        card.querySelector('[data-action="delete"]').addEventListener('click', () => deleteEquipmentConfig(item.id, item.name));
+
+        dom.adminEquipmentStockContainer.appendChild(card);
+    });
+
+    lucide.createIcons();
+}
+
+function openMaintenanceModal(item) {
+    appState.currentMaintItem = item;
+    
+    document.getElementById('maint-equipment-id').value = item.id;
+    document.getElementById('maint-equipment-name').value = item.name;
+    document.getElementById('maint-modal-item-name').textContent = item.name;
+    document.getElementById('maint-modal-category-badge').textContent = item.category || 'Equipo';
+    document.getElementById('maint-modal-total-count').textContent = item.total || 0;
+    document.getElementById('maint-modal-available-count').textContent = item.available || 0;
+    document.getElementById('maint-modal-current-maint-count').textContent = item.maintenance || 0;
+    document.getElementById('maint-count-badge').textContent = item.maintenance || 0;
+
+    const codeSelect = document.getElementById('maint-send-code');
+    codeSelect.innerHTML = '<option value="">Descontar 1 unidad disponible (sin código específico)</option>';
+    if (item.codes && Array.isArray(item.codes)) {
+        item.codes.forEach(c => {
+            const cleanC = c.trim().toUpperCase();
+            const isAlreadyMaint = (item.maintenanceNotes || []).some(m => (m.code || '').trim().toUpperCase() === cleanC);
+            if (!isAlreadyMaint) {
+                codeSelect.innerHTML += `<option value="${escapeHtml(cleanC)}">Unidad código: ${escapeHtml(cleanC)}</option>`;
+            }
+        });
+    }
+
+    document.getElementById('maint-send-reason').value = '';
+    renderMaintenanceActiveRecords(item);
+    showMaintView('send');
+
+    dom.modalMaintenance.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function showMaintView(view) {
+    if (!dom.btnTabSendMaint || !dom.btnTabViewMaint) return;
+    if (view === 'send') {
+        dom.btnTabSendMaint.classList.add('active');
+        dom.btnTabViewMaint.classList.remove('active');
+        dom.maintViewSend.classList.remove('hidden');
+        dom.maintViewList.classList.add('hidden');
+    } else {
+        dom.btnTabSendMaint.classList.remove('active');
+        dom.btnTabViewMaint.classList.add('active');
+        dom.maintViewSend.classList.add('hidden');
+        dom.maintViewList.classList.remove('hidden');
+    }
+}
+
+function renderMaintenanceActiveRecords(item) {
+    const listEl = document.getElementById('maint-active-records-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    const records = item.maintenanceNotes || [];
+
+    if (records.length === 0) {
+        listEl.innerHTML = `
+            <div style="padding: 24px; text-align: center; color: var(--text-secondary); font-size: 0.82rem;">
+                <i data-lucide="check-circle" style="width: 28px; height: 28px; color: #10b981; margin-bottom: 6px;"></i>
+                <p style="margin: 0;">No hay unidades registradas en mantención para este equipo.</p>
+            </div>
+        `;
+        lucide.createIcons();
+        return;
+    }
+
+    records.forEach((rec, idx) => {
+        const row = document.createElement('div');
+        row.className = 'maint-record-card';
+        row.innerHTML = `
+            <div class="maint-record-info">
+                <strong style="color:var(--text-primary); font-size:0.85rem;">
+                    ${rec.code ? `Código: ${escapeHtml(rec.code)}` : '1 Unidad en Taller'}
+                </strong>
+                <span style="color:var(--text-secondary); font-size:0.75rem;">Motivo: ${escapeHtml(rec.reason || 'Sin detalle')}</span>
+                <span style="color:#94a3b8; font-size:0.7rem;">Fecha ingreso: ${escapeHtml(rec.date || 'Reciente')}</span>
+            </div>
+            <button type="button" class="btn btn-secondary btn-reintegrate" data-index="${idx}" style="font-size:0.75rem; padding:6px 10px; color:#059669; border-color:#10b981; font-weight:700; white-space:nowrap;">
+                <i data-lucide="check-circle-2" style="width:14px; height:14px;"></i> Reintegrar
+            </button>
+        `;
+        row.querySelector('.btn-reintegrate').addEventListener('click', () => {
+            confirmReturnFromMaintenance(item, idx);
+        });
+        listEl.appendChild(row);
+    });
+    lucide.createIcons();
+}
+
+async function confirmSendToMaintenance(e) {
+    e.preventDefault();
+    const item = appState.currentMaintItem;
+    if (!item) return;
+
+    if (item.available <= 0) {
+        showToast("No hay unidades disponibles en pañol para enviar a mantención.", "warning");
+        return;
+    }
+
+    const selectedCode = document.getElementById('maint-send-code').value.trim();
+    const reason = document.getElementById('maint-send-reason').value.trim();
+
+    if (!reason) {
+        showToast("Por favor ingresa el motivo o diagnóstico del fallo.", "warning");
+        return;
+    }
+
+    item.available = Math.max(0, item.available - 1);
+    item.maintenance = (parseInt(item.maintenance) || 0) + 1;
+    if (!Array.isArray(item.maintenanceNotes)) item.maintenanceNotes = [];
+
+    const newRecord = {
+        id: 'm_' + Date.now(),
+        code: selectedCode,
+        reason: reason,
+        date: getNowFormatted()
+    };
+    item.maintenanceNotes.push(newRecord);
+
+    showToast(`Unidad de "${item.name}" enviada a mantención.`, "info");
+    dom.modalMaintenance.classList.add('hidden');
+
+    await saveEquipmentUpdateToBackend(item);
+    renderAdminEquipmentStockModule();
+    renderLoansModule();
+}
+
+async function confirmReturnFromMaintenance(item, recordIndex) {
+    if (!confirm(`¿Confirmas que esta unidad de "${item.name}" fue reparada y se reintegra disponible al pañol?`)) return;
+
+    if (Array.isArray(item.maintenanceNotes) && item.maintenanceNotes[recordIndex]) {
+        item.maintenanceNotes.splice(recordIndex, 1);
+    }
+    item.maintenance = Math.max(0, (parseInt(item.maintenance) || 1) - 1);
+    item.available = Math.min(item.total, (parseInt(item.available) || 0) + 1);
+
+    showToast(`Unidad de "${item.name}" reintegrada con éxito al stock disponible.`, "success");
+    dom.modalMaintenance.classList.add('hidden');
+
+    await saveEquipmentUpdateToBackend(item);
+    renderAdminEquipmentStockModule();
+    renderLoansModule();
+}
+
+function openDecommissionModal(item) {
+    appState.currentDecomItem = item;
+    document.getElementById('decom-equipment-id').value = item.id;
+    document.getElementById('decom-equipment-name').value = item.name;
+    document.getElementById('decom-modal-item-name').textContent = item.name;
+    document.getElementById('decom-reason').value = '';
+
+    const codeSelect = document.getElementById('decom-code');
+    codeSelect.innerHTML = '<option value="">Descontar 1 unidad sin código asignado</option>';
+    if (item.codes && Array.isArray(item.codes)) {
+        item.codes.forEach(c => {
+            codeSelect.innerHTML += `<option value="${escapeHtml(c.trim().toUpperCase())}">Unidad código: ${escapeHtml(c.trim().toUpperCase())}</option>`;
+        });
+    }
+
+    dom.modalDecommission.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+async function confirmDecommissionUnit(e) {
+    e.preventDefault();
+    const item = appState.currentDecomItem;
+    if (!item) return;
+
+    const code = document.getElementById('decom-code').value.trim();
+    const fromState = document.getElementById('decom-from-state').value;
+    const reason = document.getElementById('decom-reason').value.trim();
+
+    if (!reason) {
+        showToast("Ingresa el motivo detallado de la baja.", "warning");
+        return;
+    }
+
+    if (!confirm(`¿Estás 100% seguro de dar de baja definitiva esta unidad de "${item.name}"? Esta acción no se puede deshacer.`)) {
+        return;
+    }
+
+    item.total = Math.max(0, (parseInt(item.total) || 1) - 1);
+    if (fromState === 'maintenance') {
+        item.maintenance = Math.max(0, (parseInt(item.maintenance) || 1) - 1);
+        if (Array.isArray(item.maintenanceNotes) && code) {
+            item.maintenanceNotes = item.maintenanceNotes.filter(m => (m.code || '').trim().toUpperCase() !== code.toUpperCase());
+        }
+    } else {
+        item.available = Math.max(0, (parseInt(item.available) || 1) - 1);
+    }
+
+    item.decommissioned = (parseInt(item.decommissioned) || 0) + 1;
+    if (!Array.isArray(item.decommissionedNotes)) item.decommissionedNotes = [];
+
+    item.decommissionedNotes.push({
+        id: 'd_' + Date.now(),
+        code: code,
+        reason: reason,
+        fromState: fromState,
+        date: getNowFormatted()
+    });
+
+    if (code && Array.isArray(item.codes)) {
+        item.codes = item.codes.filter(c => c.trim().toUpperCase() !== code.toUpperCase());
+    }
+
+    showToast(`Unidad de "${item.name}" dada de baja correctamente.`, "info");
+    dom.modalDecommission.classList.add('hidden');
+
+    await saveEquipmentUpdateToBackend(item);
+    renderAdminEquipmentStockModule();
+    renderLoansModule();
+}
+
+function openEditEquipmentModal(item) {
+    appState.currentEditItem = item;
+    document.getElementById('edit-eq-id').value = item.id;
+    document.getElementById('edit-eq-original-name').value = item.name;
+    document.getElementById('edit-eq-name').value = item.name;
+    
+    const catSelect = document.getElementById('edit-eq-category');
+    catSelect.innerHTML = '';
+    const uniqueCategories = [...new Set(appState.inventory.map(i => cleanCategoryName(i.category)))].filter(Boolean).sort();
+    uniqueCategories.forEach(cat => {
+        catSelect.innerHTML += `<option value="${escapeHtml(cat)}" ${cat === item.category ? 'selected' : ''}>${escapeHtml(cat)}</option>`;
+    });
+
+    document.getElementById('edit-eq-total').value = item.total || 0;
+    document.getElementById('edit-eq-available').value = item.available || 0;
+    document.getElementById('edit-eq-codes').value = (item.codes || []).join(', ');
+    document.getElementById('edit-eq-image').value = item.image || '';
+    document.getElementById('edit-eq-description').value = item.description || '';
+
+    dom.modalEditEquipment.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+async function confirmSaveEditEquipment(e) {
+    e.preventDefault();
+    const item = appState.currentEditItem;
+    if (!item) return;
+
+    const originalName = document.getElementById('edit-eq-original-name').value;
+    const newName = document.getElementById('edit-eq-name').value.trim();
+    const newCategory = cleanCategoryName(document.getElementById('edit-eq-category').value);
+    const newTotal = parseInt(document.getElementById('edit-eq-total').value) || 0;
+    const newAvail = parseInt(document.getElementById('edit-eq-available').value) || 0;
+    const codesRaw = document.getElementById('edit-eq-codes').value.trim();
+    const newCodes = codesRaw ? codesRaw.split(',').map(c => c.trim().toUpperCase()).filter(Boolean) : [];
+    const newImage = getDirectImageUrl(document.getElementById('edit-eq-image').value.trim());
+    const newDesc = document.getElementById('edit-eq-description').value.trim();
+
+    if (!newName) {
+        showToast("El nombre del equipo no puede estar vacío.", "warning");
+        return;
+    }
+
+    item.name = newName;
+    item.category = newCategory;
+    item.total = newTotal;
+    item.available = newAvail;
+    item.codes = newCodes;
+    item.image = newImage;
+    item.description = newDesc;
+
+    showToast(`Equipo "${newName}" actualizado con éxito.`, "success");
+    dom.modalEditEquipment.classList.add('hidden');
+
+    await saveEquipmentUpdateToBackend(item, originalName);
+    renderAdminEquipmentStockModule();
+    renderLoansModule();
+}
+
+function openAddEquipmentModal() {
+    if (!dom.modalAddEquipment) return;
+    
+    if (dom.modalEqCategory) {
+        const uniqueCategories = [...new Set(appState.inventory.map(i => cleanCategoryName(i.category)))].filter(Boolean).sort();
+        dom.modalEqCategory.innerHTML = uniqueCategories.map(cat => `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`).join('');
+    }
+    if (dom.modalNewCategoryWrapper) dom.modalNewCategoryWrapper.style.display = 'none';
+    if (dom.modalEqNewCategory) dom.modalEqNewCategory.value = '';
+    
+    dom.modalAddEquipment.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+async function saveEquipmentFromModal() {
+    const name = document.getElementById('modal-eq-name').value.trim();
+    const selectCat = document.getElementById('modal-eq-category').value;
+    const newCatInput = document.getElementById('modal-eq-new-category');
+    const newCatWrapper = document.getElementById('modal-new-category-wrapper');
+    
+    let category = selectCat;
+    if (newCatWrapper && newCatWrapper.style.display !== 'none') {
+        const typedCat = newCatInput ? newCatInput.value.trim() : '';
+        if (!typedCat) {
+            showToast("Por favor escribe el nombre de la nueva categoría.", "warning");
+            if (newCatInput) newCatInput.focus();
+            return;
+        }
+        category = typedCat.charAt(0).toUpperCase() + typedCat.slice(1);
+    }
+    
+    if (!category) {
+        showToast("Selecciona o escribe una categoría.", "warning");
         return;
     }
     
-    appState.inventory.forEach(item => {
-        const li = document.createElement('li');
-        li.className = 'admin-list-item';
-        li.innerHTML = `
-            <div class="admin-item-info">
-                <h5>${item.name}</h5>
-                <p>Categoría: ${item.category} | Stock Total: ${item.total} (Disp: ${item.available})</p>
-            </div>
-            <button class="btn-delete-item" data-id="${item.id}" data-name="${item.name}">
-                <i data-lucide="trash-2"></i>
-            </button>
-        `;
-        li.querySelector('.btn-delete-item').addEventListener('click', (e) => {
-            const id = parseInt(e.currentTarget.getAttribute('data-id'));
-            const name = e.currentTarget.getAttribute('data-name');
-            deleteEquipmentConfig(id, name);
-        });
-        dom.adminEquipmentList.appendChild(li);
-    });
-    lucide.createIcons();
+    const total = parseInt(document.getElementById('modal-eq-qty').value);
+    const codesRaw = document.getElementById('modal-eq-codes').value.trim();
+    const codes = codesRaw ? codesRaw.split(',').map(c => c.trim().toUpperCase()).filter(Boolean) : [];
+    const imageRaw = document.getElementById('modal-eq-image') ? document.getElementById('modal-eq-image').value.trim() : '';
+    const image = getDirectImageUrl(imageRaw);
+    const description = document.getElementById('modal-eq-description') ? document.getElementById('modal-eq-description').value.trim() : '';
+    
+    if (!name || isNaN(total) || total <= 0) {
+        showToast("Completa los campos requeridos correctamente.", "warning");
+        return;
+    }
+    
+    const cleanCat = cleanCategoryName(category);
+    const newId = appState.inventory.length > 0 ? Math.max(...appState.inventory.map(i => parseInt(i.id) || 0)) + 1 : 1;
+    const newEquipment = {
+        id: newId,
+        category: cleanCat,
+        name: name,
+        total: total,
+        available: total,
+        maintenance: 0,
+        decommissioned: 0,
+        maintenanceNotes: [],
+        decommissionedNotes: [],
+        codes: codes,
+        image: image,
+        description: description
+    };
+    
+    appState.inventory.push(newEquipment);
+    if (!appState.categories.some(c => cleanCategoryName(c) === cleanCat)) {
+        appState.categories.push(cleanCat);
+    }
+
+    if (dom.modalAddEquipment) dom.modalAddEquipment.classList.add('hidden');
+    if (dom.formAddEquipmentModal) dom.formAddEquipmentModal.reset();
+    if (dom.modalNewCategoryWrapper) dom.modalNewCategoryWrapper.style.display = 'none';
+
+    showToast(`Equipo "${name}" guardado exitosamente.`, "success");
+    await saveEquipmentUpdateToBackend(newEquipment);
+
+    renderAdminEquipmentStockModule();
+    renderLoansModule();
+    renderAdminLoanEquipmentFilters();
+    updateAdminDashboard();
+}
+
+async function saveEquipmentUpdateToBackend(item, originalName) {
+    const payload = {
+        originalName: originalName || item.name,
+        name: item.name,
+        category: item.category,
+        total: item.total,
+        available: item.available,
+        maintenance: item.maintenance || 0,
+        decommissioned: item.decommissioned || 0,
+        maintenanceNotes: item.maintenanceNotes || [],
+        decommissionedNotes: item.decommissionedNotes || [],
+        codes: item.codes || [],
+        image: item.image || '',
+        description: item.description || ''
+    };
+
+    if (CONFIG.demoMode) {
+        saveDemoState();
+        return;
+    }
+
+    if (CONFIG.backendMode === 'firebase' && firestoreDb) {
+        try {
+            const docId = (item.id || item.name).toString().replace(/[\/\s]/g, '_');
+            await firestoreDb.collection('inventory').doc(docId).set(payload, { merge: true });
+        } catch (err) {
+            console.error("Error guardando actualización en Firestore:", err);
+            showToast(`Error al sincronizar con Firebase: ${err.message}`, "danger");
+        }
+    } else if (CONFIG.scriptUrl) {
+        try {
+            await fetchWithRetry(`${CONFIG.scriptUrl}?action=updateEquipment`, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify(payload)
+            }, 1, 1000, 15000);
+        } catch (e) {
+            console.error("Error actualizando equipo en Sheets:", e);
+        }
+    }
 }
 
 function isStudentBlocked(student) {
