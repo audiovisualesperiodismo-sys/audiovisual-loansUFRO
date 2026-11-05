@@ -4,7 +4,14 @@
 
 const CONFIG = {
     demoMode: false,
-    backendMode: localStorage.getItem('audiolend_backend_mode') || 'firebase',
+    backendMode: (() => {
+        const saved = localStorage.getItem('audiolend_backend_mode');
+        // Si nunca se ha completado una migración confirmada a Firebase, mantener 'sheets' por defecto para proteger la vista y datos
+        if (saved === 'firebase' && localStorage.getItem('audiolend_firebase_migrated') !== 'true') {
+            return 'sheets';
+        }
+        return saved || 'sheets';
+    })(),
     firebaseConfig: (() => {
         try {
             const raw = localStorage.getItem('audiolend_firebase_config');
@@ -786,6 +793,19 @@ function setupNetworkListeners() {
 
 function saveCurrentStateToOfflineCache() {
     try {
+        // Protección de datos: NUNCA sobreescribir una caché válida con un estado completamente vacío
+        if ((!appState.inventory || appState.inventory.length === 0) && (!appState.loans || appState.loans.length === 0)) {
+            const existing = localStorage.getItem('audiolend_offline_cache');
+            if (existing) {
+                try {
+                    const parsed = JSON.parse(existing);
+                    if (parsed && ((parsed.inventory && parsed.inventory.length > 0) || (parsed.loans && parsed.loans.length > 0))) {
+                        console.warn("Protección de datos: Se evitó sobreescribir la memoria local con un estado vacío.");
+                        return;
+                    }
+                } catch (e) {}
+            }
+        }
         localStorage.setItem('audiolend_offline_cache', JSON.stringify({
             inventory: appState.inventory,
             students: appState.students,
@@ -966,29 +986,7 @@ async function loadData(forceRefresh = false) {
         }
         showToast("Datos demo activos (AVP UFRO)", "info");
     } else {
-        // --- MODO FIREBASE FIRESTORE ---
-        if (CONFIG.backendMode === 'firebase' && CONFIG.firebaseConfig && CONFIG.firebaseConfig.projectId) {
-            const fbReady = initFirebaseService();
-            if (fbReady) {
-                if (appState.inventory.length > 0) {
-                    renderLoansModule();
-                    renderCategoryDropdown();
-                    if (appState.isAdminLoggedIn) {
-                        updateAdminDashboard();
-                        renderAdminLoans(appState.activeAdminLoanFilter);
-                    }
-                }
-                return;
-            }
-        }
-
-        if (!CONFIG.scriptUrl) {
-            showToast("Especifica la URL del Apps Script en el Panel Admin.", "warning");
-            setDemoMode(true);
-            return;
-        }
-        
-        // --- SWR (Stale-While-Revalidate): Carga instantánea desde caché local ---
+        // --- 1. SWR (Stale-While-Revalidate): Carga instantánea desde caché local segura ---
         let hasRenderedFromCache = false;
         const cachedStr = localStorage.getItem('audiolend_offline_cache');
         if (cachedStr) {
@@ -1012,6 +1010,12 @@ async function loadData(forceRefresh = false) {
                         updateAdminDashboard();
                         renderAdminLoanEquipmentFilters();
                         renderAdminLoans(appState.activeAdminLoanFilter);
+                        if (typeof renderAdminEquipmentStockModule === 'function') {
+                            renderAdminEquipmentStockModule();
+                        }
+                        if (typeof renderAdminStudentsList === 'function') {
+                            renderAdminStudentsList();
+                        }
                     }
                     hasRenderedFromCache = true;
                 }
@@ -1019,79 +1023,118 @@ async function loadData(forceRefresh = false) {
                 console.warn("Aviso: No se pudo leer caché offline:", cacheErr);
             }
         }
-        
-        const queue = getOfflineQueue();
-        if (queue.length > 0) {
-            setConnectionState("pending");
-        } else if (hasRenderedFromCache) {
-            setConnectionState("connected");
-        } else {
-            setConnectionState("syncing");
+
+        // --- 2. Servicio Firebase Firestore (si está configurado y activo) ---
+        let isFirebaseActive = false;
+        if (CONFIG.backendMode === 'firebase' && CONFIG.firebaseConfig && CONFIG.firebaseConfig.projectId) {
+            isFirebaseActive = initFirebaseService();
         }
-        updateOfflineBanner();
-        
-        if (forceRefresh) {
-            showToast("Actualizando datos desde Google Sheets...", "info");
-        }
-        
-        try {
-            setConnectionState("syncing");
-            const fetchUrl = `${CONFIG.scriptUrl}?action=getInitData&_t=${Date.now()}&fresh=${forceRefresh ? '1' : '0'}`;
-            const response = await fetchWithRetry(fetchUrl, { cache: 'no-store' }, 2, 1200, 24000);
-            
-            const data = await response.json();
-            if (data.status === "error") throw new Error(data.message);
-            
-            appState.inventory = groupInventoryItems(data.inventory);
-            appState.students = data.students || [];
-            appState.loans = data.loans || [];
-            auditAndHealLocalInventory();
-            appState.subjects = data.subjects || [];
-            appState.categories = (data.categories && Array.isArray(data.categories))
-                ? data.categories.map(cleanCategoryName)
-                : [...new Set(appState.inventory.map(i => i.category))];
-            
-            saveCurrentStateToOfflineCache();
-            
-            if (data.sheetUrl) {
-                CONFIG.sheetUrl = data.sheetUrl;
-                localStorage.setItem('audiolend_sheet_url', data.sheetUrl);
-                if (dom.sheetUrlInput) {
-                    dom.sheetUrlInput.value = data.sheetUrl;
+
+        // --- 3. Sincronización Backend (Google Sheets como Bóveda de Verdad) ---
+        // Consultar Google Sheets si:
+        // - El modo es Google Sheets
+        // - O Firebase no está activo
+        // - O el inventario local sigue en 0 (Firestore no sembrado / base nueva)
+        // - O se solicitó refresco forzado
+        const shouldFetchSheets = !isFirebaseActive || appState.inventory.length === 0 || forceRefresh;
+
+        if (shouldFetchSheets) {
+            if (!CONFIG.scriptUrl) {
+                if (appState.inventory.length === 0) {
+                    showToast("Especifica la URL del Apps Script en el Panel Admin.", "warning");
+                    setDemoMode(true);
                 }
+                return;
             }
             
-            renderLoansModule();
-            renderSubjectsDropdown();
-            renderCategoryDropdown();
-            
-            if (appState.isAdminLoggedIn) {
-                updateAdminDashboard();
-                renderAdminLoanEquipmentFilters();
-                renderAdminLoans(appState.activeAdminLoanFilter);
-            }
-            
+            const queue = getOfflineQueue();
             if (queue.length > 0) {
                 setConnectionState("pending");
-                flushOfflineQueue();
+            } else if (hasRenderedFromCache) {
+                setConnectionState(isFirebaseActive ? "firebase" : "connected");
             } else {
-                setConnectionState("connected");
+                setConnectionState("syncing");
             }
             updateOfflineBanner();
             
             if (forceRefresh) {
-                showToast("Datos actualizados desde Google Sheets", "success");
+                showToast("Actualizando datos desde Google Sheets...", "info");
             }
-        } catch (error) {
-            console.error("Error al cargar datos desde Google Sheets:", error);
-            setConnectionState("offline");
-            updateOfflineBanner();
-            if (hasRenderedFromCache || appState.inventory.length > 0) {
-                if (forceRefresh) {
-                    showToast("Sin conexión directa con Google Sheets. Mostrando datos locales seguros.", "warning");
+            
+            try {
+                setConnectionState("syncing");
+                const fetchUrl = `${CONFIG.scriptUrl}?action=getInitData&_t=${Date.now()}&fresh=${forceRefresh ? '1' : '0'}`;
+                const response = await fetchWithRetry(fetchUrl, { cache: 'no-store' }, 2, 1200, 24000);
+                
+                const data = await response.json();
+                if (data.status === "error") throw new Error(data.message);
+                
+                const rawInv = data.inventory || [];
+                if (rawInv.length > 0 || appState.inventory.length === 0) {
+                    appState.inventory = groupInventoryItems(rawInv);
+                    appState.categories = (data.categories && Array.isArray(data.categories))
+                        ? data.categories.map(cleanCategoryName)
+                        : [...new Set(appState.inventory.map(i => i.category))];
                 }
-            } else {
-                showToast(`Error de conexión con Google Sheets: ${error.message || "Red no disponible"}.`, "danger");
+                if (data.students && (data.students.length > 0 || appState.students.length === 0)) {
+                    appState.students = data.students;
+                }
+                if (data.loans && (data.loans.length > 0 || appState.loans.length === 0)) {
+                    appState.loans = data.loans;
+                }
+                auditAndHealLocalInventory();
+                if (data.subjects && data.subjects.length > 0) {
+                    appState.subjects = data.subjects;
+                }
+                
+                saveCurrentStateToOfflineCache();
+                
+                if (data.sheetUrl) {
+                    CONFIG.sheetUrl = data.sheetUrl;
+                    localStorage.setItem('audiolend_sheet_url', data.sheetUrl);
+                    if (dom.sheetUrlInput) {
+                        dom.sheetUrlInput.value = data.sheetUrl;
+                    }
+                }
+                
+                renderLoansModule();
+                renderSubjectsDropdown();
+                renderCategoryDropdown();
+                
+                if (appState.isAdminLoggedIn) {
+                    updateAdminDashboard();
+                    renderAdminLoanEquipmentFilters();
+                    renderAdminLoans(appState.activeAdminLoanFilter);
+                    if (typeof renderAdminEquipmentStockModule === 'function') {
+                        renderAdminEquipmentStockModule();
+                    }
+                    if (typeof renderAdminStudentsList === 'function') {
+                        renderAdminStudentsList();
+                    }
+                }
+                
+                if (queue.length > 0) {
+                    setConnectionState("pending");
+                    flushOfflineQueue();
+                } else {
+                    setConnectionState(isFirebaseActive ? "firebase" : "connected");
+                }
+                updateOfflineBanner();
+                
+                if (forceRefresh) {
+                    showToast("Datos actualizados desde Google Sheets", "success");
+                }
+            } catch (error) {
+                console.error("Error al cargar datos desde Google Sheets:", error);
+                setConnectionState(hasRenderedFromCache ? (isFirebaseActive ? "firebase" : "connected") : "offline");
+                updateOfflineBanner();
+                if (hasRenderedFromCache || appState.inventory.length > 0) {
+                    if (forceRefresh) {
+                        showToast("Sin conexión directa con Google Sheets. Mostrando datos locales seguros.", "warning");
+                    }
+                } else {
+                    showToast(`Error de conexión con Google Sheets: ${error.message || "Red no disponible"}.`, "danger");
+                }
             }
         }
     }
@@ -1265,7 +1308,10 @@ function initFirebaseService() {
 
         // 1. Escuchar Inventario en Tiempo Real
         const unsubInv = firestoreDb.collection('inventory').onSnapshot(snap => {
-            if (snap.empty && appState.inventory.length > 0) return;
+            if (snap.empty) {
+                console.log("Inventario Firestore vacío; conservando inventario cargado.");
+                return;
+            }
             const items = [];
             snap.forEach(doc => {
                 const data = doc.data();
@@ -1274,12 +1320,17 @@ function initFirebaseService() {
             if (items.length > 0) {
                 appState.inventory = groupInventoryItems(items);
                 appState.categories = [...new Set(appState.inventory.map(i => i.category))];
+                auditAndHealLocalInventory();
+                saveCurrentStateToOfflineCache();
                 renderLoansModule();
                 renderCategoryDropdown();
                 if (appState.isAdminLoggedIn) {
                     updateAdminDashboard();
                     renderAdminLoanEquipmentFilters();
                     renderAdminEquipmentList();
+                    if (typeof renderAdminEquipmentStockModule === 'function') {
+                        renderAdminEquipmentStockModule();
+                    }
                 }
             }
         }, err => {
@@ -1290,15 +1341,23 @@ function initFirebaseService() {
 
         // 2. Escuchar Préstamos en Tiempo Real
         const unsubLoans = firestoreDb.collection('loans').onSnapshot(snap => {
+            if (snap.empty && appState.loans.length > 0) {
+                console.log("Préstamos Firestore vacío; conservando historial local cargado.");
+                return;
+            }
             const loans = [];
             snap.forEach(doc => {
                 loans.push({ docId: doc.id, ...doc.data() });
             });
-            appState.loans = loans;
-            renderLoansModule();
-            if (appState.isAdminLoggedIn) {
-                updateAdminDashboard();
-                renderAdminLoans(appState.activeAdminLoanFilter);
+            if (loans.length > 0 || appState.loans.length === 0) {
+                appState.loans = loans;
+                auditAndHealLocalInventory();
+                saveCurrentStateToOfflineCache();
+                renderLoansModule();
+                if (appState.isAdminLoggedIn) {
+                    updateAdminDashboard();
+                    renderAdminLoans(appState.activeAdminLoanFilter);
+                }
             }
         }, err => {
             console.warn("Aviso escuchador préstamos Firestore:", err);
@@ -1307,12 +1366,17 @@ function initFirebaseService() {
 
         // 3. Escuchar Alumnos en Tiempo Real
         const unsubStudents = firestoreDb.collection('students').onSnapshot(snap => {
+            if (snap.empty && appState.students.length > 0) {
+                console.log("Padrón de alumnos Firestore vacío; conservando alumnos locales.");
+                return;
+            }
             const students = [];
             snap.forEach(doc => {
                 students.push({ ...doc.data() });
             });
             if (students.length > 0) {
                 appState.students = students;
+                saveCurrentStateToOfflineCache();
                 if (appState.isAdminLoggedIn) {
                     renderAdminStudentsList();
                 }
@@ -1407,6 +1471,10 @@ async function seedCurrentDataToFirebase() {
                     name: item.name || "",
                     total: parseInt(item.total) || 0,
                     available: parseInt(item.available) || 0,
+                    maintenance: parseInt(item.maintenance) || 0,
+                    decommissioned: parseInt(item.decommissioned) || 0,
+                    maintenanceNotes: Array.isArray(item.maintenanceNotes) ? item.maintenanceNotes : [],
+                    decommissionedNotes: Array.isArray(item.decommissionedNotes) ? item.decommissionedNotes : [],
                     codes: Array.isArray(item.codes) ? item.codes : [],
                     image: item.image || "",
                     description: item.description || ""
@@ -1475,7 +1543,13 @@ async function seedCurrentDataToFirebase() {
             lastBackupToSheets: getNowFormatted()
         }, { merge: true });
 
-        showToast(`¡Migración completada con éxito! Datos disponibles 100% en vivo en Firebase.`, "success");
+        localStorage.setItem('audiolend_firebase_migrated', 'true');
+        localStorage.setItem('audiolend_backend_mode', 'firebase');
+        CONFIG.backendMode = 'firebase';
+        if (dom.selectBackendMode) dom.selectBackendMode.value = 'firebase';
+        updateFirebaseBadge('online', 'En línea (Tiempo Real)');
+        setConnectionState('firebase');
+        showToast(`¡Migración completada con éxito! ${appState.inventory.length} equipos sincronizados en vivo en Firebase.`, "success");
     } catch (err) {
         console.error("Error al sembrar en Firestore:", err);
         showToast(`Error durante la migración: ${err.message}`, "danger");
@@ -2496,7 +2570,7 @@ function initEventListeners() {
     }
 
     if (dom.selectBackendMode) {
-        dom.selectBackendMode.value = CONFIG.backendMode || 'firebase';
+        dom.selectBackendMode.value = CONFIG.backendMode || 'sheets';
         dom.selectBackendMode.addEventListener('change', (e) => {
             const mode = e.target.value;
             CONFIG.backendMode = mode;
