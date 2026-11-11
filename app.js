@@ -6,9 +6,16 @@ const CONFIG = {
     demoMode: false,
     backendMode: (() => {
         const saved = localStorage.getItem('audiolend_backend_mode');
-        // Si nunca se ha completado una migración confirmada a Firebase, mantener 'sheets' por defecto para proteger la vista y datos
-        if (saved === 'firebase' && localStorage.getItem('audiolend_firebase_migrated') !== 'true') {
-            return 'sheets';
+        const hasFb = (() => {
+            try {
+                const r = localStorage.getItem('audiolend_firebase_config');
+                const p = r ? JSON.parse(r) : null;
+                return Boolean(p && p.projectId);
+            } catch(e) { return false; }
+        })();
+        // Si hay credenciales de Firebase configuradas, activar Firebase directamente para máxima velocidad en tiempo real (<100ms)
+        if (hasFb) {
+            return 'firebase';
         }
         return saved || 'sheets';
     })(),
@@ -300,6 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
     setupNetworkListeners();
     startHeartbeat();
+    setTimeout(() => checkAndTriggerScheduledBackup(), 5000);
     lucide.createIcons();
     
     // Registro de Service Worker para PWA (Fase 23)
@@ -728,6 +736,7 @@ let heartbeatInterval = null;
 function startHeartbeat() {
     if (heartbeatInterval) clearInterval(heartbeatInterval);
     heartbeatInterval = setInterval(async () => {
+        checkAndTriggerScheduledBackup();
         if (CONFIG.demoMode || !CONFIG.scriptUrl || document.hidden || !navigator.onLine) return;
         try {
             const res = await fetchWithTimeout(`${CONFIG.scriptUrl}?action=ping&_t=${Date.now()}`, { cache: 'no-store' }, 7000);
@@ -955,7 +964,7 @@ function applyCancelOptimisticState(loanId) {
     return true;
 }
 
-async function loadData(forceRefresh = false) {
+async function loadData(forceRefresh = false, isUserInitiated = false) {
     if (CONFIG.demoMode) {
         if (appState.inventory.length === 0) {
             let rawInv = JSON.parse(localStorage.getItem('audiolend_demo_inventory'));
@@ -1057,7 +1066,7 @@ async function loadData(forceRefresh = false) {
             }
             updateOfflineBanner();
             
-            if (forceRefresh) {
+            if (forceRefresh && isUserInitiated) {
                 showToast("Actualizando datos desde Google Sheets...", "info");
             }
             
@@ -1121,7 +1130,7 @@ async function loadData(forceRefresh = false) {
                 }
                 updateOfflineBanner();
                 
-                if (forceRefresh) {
+                if (forceRefresh && isUserInitiated) {
                     showToast("Datos actualizados desde Google Sheets", "success");
                 }
             } catch (error) {
@@ -1129,7 +1138,7 @@ async function loadData(forceRefresh = false) {
                 setConnectionState(hasRenderedFromCache ? (isFirebaseActive ? "firebase" : "connected") : "offline");
                 updateOfflineBanner();
                 if (hasRenderedFromCache || appState.inventory.length > 0) {
-                    if (forceRefresh) {
+                    if (forceRefresh && isUserInitiated) {
                         showToast("Sin conexión directa con Google Sheets. Mostrando datos locales seguros.", "warning");
                     }
                 } else {
@@ -1309,7 +1318,10 @@ function initFirebaseService() {
         // 1. Escuchar Inventario en Tiempo Real
         const unsubInv = firestoreDb.collection('inventory').onSnapshot(snap => {
             if (snap.empty) {
-                console.log("Inventario Firestore vacío; conservando inventario cargado.");
+                console.log("Inventario Firestore vacío. Sembrando automáticamente desde datos locales...");
+                if (appState.inventory && appState.inventory.length > 0) {
+                    autoSeedCurrentDataToFirebase();
+                }
                 return;
             }
             const items = [];
@@ -1441,20 +1453,36 @@ async function testFirebaseConnection() {
     }
 }
 
-async function seedCurrentDataToFirebase() {
+let isAutoSeedingActive = false;
+async function autoSeedCurrentDataToFirebase() {
+    if (isAutoSeedingActive || !firestoreDb) return;
+    if (!appState.inventory || appState.inventory.length === 0) return;
+    isAutoSeedingActive = true;
+    try {
+        console.log("Auto-sembrando catálogo en Firestore en segundo plano...");
+        await seedCurrentDataToFirebase(true);
+    } catch (e) {
+        console.warn("Aviso auto-sembrando:", e);
+    } finally {
+        isAutoSeedingActive = false;
+    }
+}
+
+async function seedCurrentDataToFirebase(isSilent = false) {
     if (!firestoreDb) {
         const ok = initFirebaseService();
         if (!ok || !firestoreDb) {
-            showToast("Debes conectar Firebase antes de sembrar los datos.", "warning");
+            if (!isSilent) showToast("Debes conectar Firebase antes de sembrar los datos.", "warning");
             return;
         }
     }
 
-    if (!confirm(`¿Deseas migrar todo el catálogo actual (${appState.inventory.length} equipos, ${appState.students.length} alumnos y ${appState.loans.length} préstamos) a Firebase Firestore? Esta acción sembrará la base de datos en la nube.`)) {
-        return;
+    if (!isSilent) {
+        if (!confirm(`¿Deseas migrar todo el catálogo actual (${appState.inventory.length} equipos, ${appState.students.length} alumnos y ${appState.loans.length} préstamos) a Firebase Firestore? Esta acción sembrará la base de datos en la nube.`)) {
+            return;
+        }
+        showToast("Subiendo catálogo a Firebase Firestore...", "info");
     }
-
-    showToast("Subiendo catálogo a Firebase Firestore...", "info");
 
     try {
         let totalBatches = 0;
@@ -1619,9 +1647,9 @@ async function executeCheckoutFirebase(loanItems, progRetiro, progDevolucion, su
         });
 
         // 2. Descontar stock disponible en la colección de inventario
+        const invSnap = await firestoreDb.collection('inventory').get();
         for (const item of loanItems) {
             const cleanName = item.name.trim().toLowerCase();
-            const invSnap = await firestoreDb.collection('inventory').get();
             invSnap.forEach(doc => {
                 const d = doc.data();
                 if ((d.name || '').trim().toLowerCase() === cleanName) {
@@ -1646,7 +1674,7 @@ async function executeCheckoutFirebase(loanItems, progRetiro, progDevolucion, su
             progDevolucion: progDevolucion
         });
 
-        // Envío asíncrono de correo mediante Google Apps Script si está disponible
+        // Envío asíncrono de correo mediante Google Apps Script sin tocar las filas de Sheets
         if (CONFIG.scriptUrl) {
             fetchWithTimeout(`${CONFIG.scriptUrl}?action=createLoan`, {
                 method: 'POST',
@@ -1654,6 +1682,7 @@ async function executeCheckoutFirebase(loanItems, progRetiro, progDevolucion, su
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify({
                     requestId: 'fs_' + Date.now(),
+                    loanId: loanId,
                     student: appState.validatedStudent,
                     items: loanItems,
                     progRetiro: progRetiro,
@@ -1786,6 +1815,8 @@ async function executeDeliverLoanFirebase(loanId, activeItems, itemsPayload, can
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify({
                     loanId: loanId,
+                    studentName: firstItem.name || "",
+                    studentEmail: firstItem.email || "",
                     items: itemsPayload,
                     cancelledItems: cancelledItems || [],
                     timestamp: dateStr,
@@ -1842,12 +1873,15 @@ async function executeReturnLoanFirebase(loanId, obsReturnVal) {
 
         // Enviar correo de comprobante de devolución
         if (CONFIG.scriptUrl && returnedItems.length > 0) {
+            const firstLoanDoc = loansSnap.docs[0] ? loansSnap.docs[0].data() : {};
             fetchWithTimeout(`${CONFIG.scriptUrl}?action=returnLoan`, {
                 method: 'POST',
                 mode: 'cors',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify({
                     loanId: loanId,
+                    studentName: firstLoanDoc.name || "",
+                    studentEmail: firstLoanDoc.email || "",
                     timestamp: dateStr,
                     obsReturn: obsReturnVal || '',
                     items: returnedItems,
@@ -1899,13 +1933,13 @@ async function executeCancelLoanFirebase(loanId) {
 // RESPALDO DE SEGURIDAD A GOOGLE SHEETS
 // ------------------------------------------
 
-async function backupFirestoreToGoogleSheets() {
+async function backupFirestoreToGoogleSheets(silent = false) {
     if (!CONFIG.scriptUrl) {
-        showToast("Configura la URL de Google Apps Script para respaldar.", "warning");
+        if (!silent) showToast("Configura la URL de Google Apps Script para respaldar.", "warning");
         return;
     }
 
-    showToast("Generando respaldo de seguridad en Google Sheets...", "info");
+    if (!silent) showToast("Generando respaldo de seguridad en Google Sheets...", "info");
     const timestamp = getNowFormatted();
 
     try {
@@ -1926,18 +1960,38 @@ async function backupFirestoreToGoogleSheets() {
         const data = await response.json();
         if (data.status === 'success') {
             updateLastBackupDisplay(timestamp);
+            localStorage.setItem('audiolend_last_auto_backup_ts', Date.now().toString());
             if (firestoreDb) {
                 firestoreDb.collection('settings').doc('metadata').set({
                     lastBackupToSheets: timestamp
                 }, { merge: true }).catch(e => {});
             }
-            showToast(`¡Respaldo exitoso! Se sincronizaron ${payload.loans.length} préstamos en Google Sheets.`, "success");
+            if (!silent) {
+                showToast(`¡Respaldo exitoso! Se sincronizaron ${payload.loans.length} préstamos en Google Sheets.`, "success");
+            } else {
+                console.log(`Respaldo silencioso a Google Sheets completado: ${payload.loans.length} préstamos.`);
+            }
         } else {
-            showToast(`Aviso en respaldo: ${data.message || 'Error del servidor'}`, "warning");
+            if (!silent) showToast(`Aviso en respaldo: ${data.message || 'Error del servidor'}`, "warning");
         }
     } catch (err) {
         console.error("Error al respaldar en Google Sheets:", err);
-        showToast(`Fallo al respaldar en Google Sheets: ${err.message}`, "danger");
+        if (!silent) showToast(`Fallo al respaldar en Google Sheets: ${err.message}`, "danger");
+    }
+}
+
+function checkAndTriggerScheduledBackup() {
+    if (CONFIG.backendMode !== 'firebase' || !firestoreDb) return;
+    
+    const lastBackupStr = localStorage.getItem('audiolend_last_auto_backup_ts');
+    const lastBackup = lastBackupStr ? parseInt(lastBackupStr, 10) : 0;
+    const now = Date.now();
+    // Respaldo automático 3 veces al día (cada 8 horas = 28,800,000 ms)
+    const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000;
+    
+    if (now - lastBackup >= EIGHT_HOURS_MS) {
+        console.log("Ejecutando respaldo automático de la Bóveda en Google Sheets (3 veces al día)...");
+        backupFirestoreToGoogleSheets(true);
     }
 }
 
@@ -1958,7 +2012,7 @@ function initEventListeners() {
     }
     
     dom.btnRefresh.addEventListener('click', () => {
-        loadData(true);
+        loadData(true, true);
     });
     
     dom.navButtons.forEach(btn => {
@@ -1999,8 +2053,8 @@ function initEventListeners() {
             } else if (target === 'admin-tab-loans') {
                 renderAdminLoanEquipmentFilters();
                 renderAdminLoans(appState.activeAdminLoanFilter);
-                if (!CONFIG.demoMode) {
-                    loadData(true);
+                if (!CONFIG.demoMode && CONFIG.backendMode !== 'firebase') {
+                    loadData(false);
                 }
             } else if (target === 'admin-tab-equipment') {
                 renderAdminEquipmentStockModule();

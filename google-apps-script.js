@@ -999,6 +999,18 @@ function executeCreateLoan(ss, payload) {
       }
     }
 
+    // Modo Bóveda / Desacoplado: Si la solicitud proviene de Firebase Firestore en vivo,
+    // solo se envía el comprobante por correo sin alterar las filas de Google Sheets (el respaldo se hace 3 veces al día)
+    if (payload.skipSheetWrite) {
+      const loanId = payload.loanId || ("L-" + Date.now().toString().slice(-4));
+      try {
+        sendLoanConfirmationEmail(payload.student, payload.items, payload.timestamp, payload.progRetiro, payload.progDevolucion, payload.subject, loanId);
+      } catch (mailErr) {
+        Logger.log("Aviso enviando correo en skipSheetWrite: " + mailErr.toString());
+      }
+      return { status: "success", loanId: loanId, skipSheetWrite: true };
+    }
+
     const invSheet = ss.getSheetByName("Inventario");
     let loanSheet = ss.getSheetByName("Préstamos");
     
@@ -1143,6 +1155,19 @@ function executeCreateLoan(ss, payload) {
 
 // 2. Registrar Retiro Físico (Estado: Retirado, Email 2)
 function executeDeliverLoan(ss, payload) {
+  if (payload && payload.skipSheetWrite) {
+    try {
+      const studentName = payload.studentName || (payload.student ? payload.student.name : "");
+      const studentEmail = payload.studentEmail || (payload.student ? payload.student.email : "");
+      if (studentEmail) {
+        sendRetiroFisicoEmail(studentName, studentEmail, payload.items || [], payload.timestamp, payload.loanId);
+      }
+    } catch (e) {
+      Logger.log("Aviso enviando correo entrega en skipSheetWrite: " + e.toString());
+    }
+    return { status: "success", skipSheetWrite: true };
+  }
+
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); } catch (e) {
     return { status: "error", message: "Servidor ocupado." };
@@ -1429,6 +1454,19 @@ function executeDeliverLoan(ss, payload) {
 }
 
 function executeReturnLoan(ss, payload) {
+  if (payload && payload.skipSheetWrite) {
+    try {
+      const studentName = payload.studentName || (payload.student ? payload.student.name : "");
+      const studentEmail = payload.studentEmail || (payload.student ? payload.student.email : "");
+      if (studentEmail) {
+        sendDevolucionEmail(studentName, studentEmail, payload.items || [], payload.timestamp, payload.loanId, payload.obsReturn || "");
+      }
+    } catch (e) {
+      Logger.log("Aviso enviando correo devolución en skipSheetWrite: " + e.toString());
+    }
+    return { status: "success", skipSheetWrite: true };
+  }
+
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); } catch (e) {
     return { status: "error", message: "Servidor ocupado." };
