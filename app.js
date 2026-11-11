@@ -4,21 +4,7 @@
 
 const CONFIG = {
     demoMode: false,
-    backendMode: (() => {
-        const saved = localStorage.getItem('audiolend_backend_mode');
-        const hasFb = (() => {
-            try {
-                const r = localStorage.getItem('audiolend_firebase_config');
-                const p = r ? JSON.parse(r) : null;
-                return Boolean(p && p.projectId);
-            } catch(e) { return false; }
-        })();
-        // Si hay credenciales de Firebase configuradas, activar Firebase directamente para máxima velocidad en tiempo real (<100ms)
-        if (hasFb) {
-            return 'firebase';
-        }
-        return saved || 'sheets';
-    })(),
+    backendMode: localStorage.getItem('audiolend_backend_mode') || 'sheets',
     firebaseConfig: (() => {
         try {
             const raw = localStorage.getItem('audiolend_firebase_config');
@@ -277,6 +263,17 @@ document.addEventListener('DOMContentLoaded', () => {
         dom.sheetUrlInput.value = CONFIG.sheetUrl.includes('1_YOUR_SHEET_ID') ? '' : CONFIG.sheetUrl;
     }
     
+    // Forzar sincronización limpia con Google Sheets eliminando caché obsoleta de octubre
+    if (!localStorage.getItem('audiolend_force_sheets_sync_v4')) {
+        localStorage.removeItem('audiolend_offline_cache');
+        localStorage.removeItem('audiolend_firebase_migrated');
+        localStorage.removeItem('audiolend_firebase_migrated_v3');
+        localStorage.removeItem('audiolend_firebase_migrated_v4');
+        localStorage.setItem('audiolend_backend_mode', 'sheets');
+        localStorage.setItem('audiolend_force_sheets_sync_v4', 'true');
+        CONFIG.backendMode = 'sheets';
+    }
+
     // Forzar limpieza de base demo antigua para empezar de cero
     if (!localStorage.getItem('audiolend_clean_slate_v1')) {
         localStorage.removeItem('audiolend_demo_inventory');
@@ -1043,9 +1040,11 @@ async function loadData(forceRefresh = false, isUserInitiated = false) {
         // Consultar Google Sheets si:
         // - El modo es Google Sheets
         // - O Firebase no está activo
+        // - O no se ha completado la migración de datos frescos a Firestore (audiolend_firebase_migrated_v4)
         // - O el inventario local sigue en 0 (Firestore no sembrado / base nueva)
         // - O se solicitó refresco forzado
-        const shouldFetchSheets = !isFirebaseActive || appState.inventory.length === 0 || forceRefresh;
+        const isAlreadyMigrated = localStorage.getItem('audiolend_firebase_migrated_v4') === 'true';
+        const shouldFetchSheets = !isFirebaseActive || !isAlreadyMigrated || appState.inventory.length === 0 || forceRefresh;
 
         if (shouldFetchSheets) {
             if (!CONFIG.scriptUrl) {
@@ -1097,6 +1096,15 @@ async function loadData(forceRefresh = false, isUserInitiated = false) {
                 }
                 
                 saveCurrentStateToOfflineCache();
+                
+                // Si Firebase está configurado y aún no se ha sincronizado la Bóveda completa de noviembre (o es refresco forzado),
+                // sincronizar en segundo plano hacia Firestore para actualizar la nube con la fecha real (11/11/2026).
+                if (CONFIG.firebaseConfig && CONFIG.firebaseConfig.projectId && (!isAlreadyMigrated || forceRefresh)) {
+                    console.log("Sincronizando Bóveda de Google Sheets hacia Firebase Firestore en segundo plano...");
+                    setTimeout(() => {
+                        seedCurrentDataToFirebase(true);
+                    }, 600);
+                }
                 
                 if (data.sheetUrl) {
                     CONFIG.sheetUrl = data.sheetUrl;
@@ -1317,6 +1325,7 @@ function initFirebaseService() {
 
         // 1. Escuchar Inventario en Tiempo Real
         const unsubInv = firestoreDb.collection('inventory').onSnapshot(snap => {
+            if (CONFIG.backendMode !== 'firebase') return;
             if (snap.empty) {
                 console.log("Inventario Firestore vacío. Sembrando automáticamente desde datos locales...");
                 if (appState.inventory && appState.inventory.length > 0) {
@@ -1330,6 +1339,10 @@ function initFirebaseService() {
                 items.push({ id: doc.id, ...data });
             });
             if (items.length > 0) {
+                if (appState.inventory && appState.inventory.length > items.length && appState.inventory.length > 5) {
+                    console.warn(`Firestore tiene menos equipos (${items.length}) que Bóveda local (${appState.inventory.length}). Conservando Bóveda.`);
+                    return;
+                }
                 appState.inventory = groupInventoryItems(items);
                 appState.categories = [...new Set(appState.inventory.map(i => i.category))];
                 auditAndHealLocalInventory();
@@ -1353,14 +1366,29 @@ function initFirebaseService() {
 
         // 2. Escuchar Préstamos en Tiempo Real
         const unsubLoans = firestoreDb.collection('loans').onSnapshot(snap => {
-            if (snap.empty && appState.loans.length > 0) {
-                console.log("Préstamos Firestore vacío; conservando historial local cargado.");
+            if (CONFIG.backendMode !== 'firebase') return;
+            if (snap.empty) {
+                if (appState.loans && appState.loans.length > 0) {
+                    console.log("Préstamos Firestore vacío; conservando historial de Sheets y sembrando en Firestore...");
+                    seedCurrentDataToFirebase(true);
+                }
                 return;
             }
             const loans = [];
             snap.forEach(doc => {
                 loans.push({ docId: doc.id, ...doc.data() });
             });
+            
+            // GUARDIA CRÍTICA CONTRA REGISTROS OBSOLETOS DE OCTUBRE:
+            // Si Firestore tiene menos préstamos que los que ya tenemos cargados desde Google Sheets
+            // (ej: Firestore tiene 12 préstamos viejos del 29/10 y Sheets tiene 100+ préstamos hasta hoy),
+            // NO sobreescribir la memoria con los datos viejos. En su lugar, sincronizar los datos de Sheets a Firestore.
+            if (appState.loans && appState.loans.length > loans.length && appState.loans.length > 5) {
+                console.warn(`Firestore está desactualizado (${loans.length} préstamos en Firestore vs ${appState.loans.length} en Google Sheets). Conservando datos de Sheets y sincronizando nube...`);
+                seedCurrentDataToFirebase(true);
+                return;
+            }
+
             if (loans.length > 0 || appState.loans.length === 0) {
                 appState.loans = loans;
                 auditAndHealLocalInventory();
@@ -1378,6 +1406,7 @@ function initFirebaseService() {
 
         // 3. Escuchar Alumnos en Tiempo Real
         const unsubStudents = firestoreDb.collection('students').onSnapshot(snap => {
+            if (CONFIG.backendMode !== 'firebase') return;
             if (snap.empty && appState.students.length > 0) {
                 console.log("Padrón de alumnos Firestore vacío; conservando alumnos locales.");
                 return;
@@ -1387,6 +1416,10 @@ function initFirebaseService() {
                 students.push({ ...doc.data() });
             });
             if (students.length > 0) {
+                if (appState.students && appState.students.length > students.length && appState.students.length > 5) {
+                    console.warn(`Firestore tiene menos alumnos (${students.length}) que Bóveda local (${appState.students.length}). Conservando Bóveda.`);
+                    return;
+                }
                 appState.students = students;
                 saveCurrentStateToOfflineCache();
                 if (appState.isAdminLoggedIn) {
@@ -1478,15 +1511,30 @@ async function seedCurrentDataToFirebase(isSilent = false) {
     }
 
     if (!isSilent) {
-        if (!confirm(`¿Deseas migrar todo el catálogo actual (${appState.inventory.length} equipos, ${appState.students.length} alumnos y ${appState.loans.length} préstamos) a Firebase Firestore? Esta acción sembrará la base de datos en la nube.`)) {
+        if (!confirm(`¿Deseas migrar todo el catálogo actual (${appState.inventory.length} equipos, ${appState.students.length} alumnos y ${appState.loans.length} préstamos) a Firebase Firestore? Esta acción limpiará datos obsoletos de prueba y pondrá la nube al día.`)) {
             return;
         }
-        showToast("Subiendo catálogo a Firebase Firestore...", "info");
+        showToast("Subiendo catálogo actualizado a Firebase Firestore...", "info");
     }
 
     try {
         let totalBatches = 0;
         
+        // 0. Depuración de documentos viejos de préstamos en Firestore para evitar residuos de octubre
+        try {
+            const oldLoansSnap = await firestoreDb.collection('loans').get();
+            if (!oldLoansSnap.empty) {
+                const deleteChunks = chunkArray(oldLoansSnap.docs, 300);
+                for (const chunk of deleteChunks) {
+                    const delBatch = firestoreDb.batch();
+                    chunk.forEach(d => delBatch.delete(d.ref));
+                    await delBatch.commit();
+                }
+            }
+        } catch (delErr) {
+            console.warn("Aviso al depurar préstamos obsoletos de Firestore:", delErr);
+        }
+
         // 1. Subir Inventario
         const invChunks = chunkArray(appState.inventory, 300);
         for (const chunk of invChunks) {
@@ -1534,12 +1582,16 @@ async function seedCurrentDataToFirebase(isSilent = false) {
             totalBatches++;
         }
 
-        // 3. Subir Préstamos
+        // 3. Subir Préstamos con claves deterministas
         const loanChunks = chunkArray(appState.loans, 300);
         for (const chunk of loanChunks) {
             const batch = firestoreDb.batch();
-            chunk.forEach(l => {
-                const docRef = firestoreDb.collection('loans').doc();
+            chunk.forEach((l, idx) => {
+                const cleanId = (l.id || '').toString().trim();
+                const cleanItem = (l.item || '').toString().trim().replace(/[\/\s]/g, '_');
+                const cleanCode = (l.code || '').toString().trim().replace(/[\/\s]/g, '_');
+                const docKey = `${cleanId}_${cleanItem}_${cleanCode}` || (`loan_${idx}_` + Math.random().toString(36).substr(2, 6));
+                const docRef = firestoreDb.collection('loans').doc(docKey);
                 batch.set(docRef, {
                     id: l.id || "",
                     rut: l.rut || "",
@@ -1571,16 +1623,20 @@ async function seedCurrentDataToFirebase(isSilent = false) {
             lastBackupToSheets: getNowFormatted()
         }, { merge: true });
 
-        localStorage.setItem('audiolend_firebase_migrated', 'true');
+        localStorage.setItem('audiolend_firebase_migrated_v4', 'true');
         localStorage.setItem('audiolend_backend_mode', 'firebase');
         CONFIG.backendMode = 'firebase';
         if (dom.selectBackendMode) dom.selectBackendMode.value = 'firebase';
         updateFirebaseBadge('online', 'En línea (Tiempo Real)');
         setConnectionState('firebase');
-        showToast(`¡Migración completada con éxito! ${appState.inventory.length} equipos sincronizados en vivo en Firebase.`, "success");
+        if (!isSilent) {
+            showToast(`¡Nube puesta al día! ${appState.loans.length} préstamos sincronizados en tiempo real en Firebase.`, "success");
+        } else {
+            console.log(`Auto-migración completada: ${appState.loans.length} préstamos sincronizados en Firebase.`);
+        }
     } catch (err) {
         console.error("Error al sembrar en Firestore:", err);
-        showToast(`Error durante la migración: ${err.message}`, "danger");
+        if (!isSilent) showToast(`Error durante la migración: ${err.message}`, "danger");
     }
 }
 
@@ -2678,8 +2734,13 @@ function initEventListeners() {
     }
 
     if (dom.btnSeedFirebase) {
-        dom.btnSeedFirebase.addEventListener('click', () => {
-            seedCurrentDataToFirebase();
+        dom.btnSeedFirebase.addEventListener('click', async () => {
+            if (!confirm(`¿Deseas descargar los datos más recientes de la Bóveda de Google Sheets y sincronizarlos a Firebase Firestore? Esto actualizará todos los préstamos históricos hasta hoy y pondrá la nube al día.`)) {
+                return;
+            }
+            showToast("Descargando datos frescos desde Google Sheets...", "info");
+            await loadData(true, true);
+            await seedCurrentDataToFirebase(false);
         });
     }
     

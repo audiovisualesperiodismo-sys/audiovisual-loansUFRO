@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Estilos -->
-    <link rel="stylesheet" href="styles.css?v=49.0">
+    <link rel="stylesheet" href="styles.css?v=50.0">
     <!-- Lucide Icons para Iconos Premium -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Analíticas -->
@@ -705,10 +705,10 @@
                                 <div class="input-group">
                                     <label for="select-backend-mode"><strong>Modo de Base de Datos Activo:</strong></label>
                                     <select id="select-backend-mode" class="select-input" style="padding: 10px; border-radius: 6px; border: 1px solid var(--glass-border); font-size: 0.85rem; font-weight: 700; background: #fff;">
-                                        <option value="firebase" selected>🔥 Firebase Firestore (Recomendado - Tiempo Real &lt;100ms)</option>
+                                        <option value="firebase" selected>🔥 Firebase Firestore (Recomendado - Tiempo Real &lt;100ms - Respaldo en Sheets 3x/día)</option>
                                         <option value="sheets">📊 Google Sheets + Apps Script (Modo Tradicional / Contingencia)</option>
                                     </select>
-                                    <span class="input-helper">Elige Firebase para trabajar en vivo a máxima velocidad. Si en algún momento deseas volver a Google Sheets directo, puedes cambiarlo aquí con un clic.</span>
+                                    <span class="input-helper">Elige Firebase para trabajar en vivo a máxima velocidad (&lt;100ms) sin bloqueos ni esperas. Si en algún momento deseas volver a Google Sheets directo, puedes cambiarlo aquí con un clic.</span>
                                 </div>
 
                                 <div class="input-group" style="margin-top: 15px;">
@@ -724,8 +724,8 @@
                                     <button class="btn btn-secondary" id="btn-test-firebase" style="display:flex; align-items:center; gap:6px;">
                                         <i data-lucide="zap"></i> Probar Conexión Firestore
                                     </button>
-                                    <button class="btn btn-secondary" id="btn-seed-firebase" style="display:flex; align-items:center; gap:6px; background:rgba(79, 70, 229, 0.08); border-color:rgba(79, 70, 229, 0.3); color:var(--primary);" title="Subir todo el inventario, alumnos y préstamos actuales a la base de datos de Firebase">
-                                        <i data-lucide="upload-cloud"></i> Sembrar Datos Actuales a Firebase
+                                    <button class="btn btn-secondary" id="btn-seed-firebase" style="display:flex; align-items:center; gap:6px; background:rgba(79, 70, 229, 0.08); border-color:rgba(79, 70, 229, 0.3); color:var(--primary); font-weight:700;" title="Descargar datos frescos de la Bóveda de Google Sheets y sincronizarlos a Firebase Firestore">
+                                        <i data-lucide="refresh-cw"></i> 🔄 Sincronizar Bóveda Sheets hacia Firebase (Poner Nube al Día)
                                     </button>
                                 </div>
 
@@ -1216,6 +1216,6 @@
     <div id="toast-container"></div>
 
     <!-- Inicialización de Scripts -->
-    <script src="app.js?v=49.0"></script>
+    <script src="app.js?v=50.0"></script>
 </body>
 </html>
